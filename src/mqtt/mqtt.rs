@@ -1,6 +1,5 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use derive_more::{Deref, DerefMut};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use rumqttc::{
     AsyncClient as MqttClient, ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event,
@@ -15,6 +14,7 @@ use tokio::{
 use tracing::{debug_span, error_span, info_span, warn_span};
 use veil::Redact;
 
+use super::subscription::TopicSubscription;
 use crate::{
     event_manager::{EventCore, EventType},
     sync_utils::LockableNotify,
@@ -207,29 +207,6 @@ macro_rules! assert_unchanged {
     };
 }
 pub(crate) use assert_unchanged;
-#[derive(Deref, DerefMut)]
-pub struct TopicSubscription {
-    #[deref]
-    #[deref_mut]
-    receiver: broadcast::Receiver<Publish>,
-    topic: String,
-}
-impl TopicSubscription {
-    pub fn new(receiver: broadcast::Receiver<Publish>, topic: String) -> TopicSubscription {
-        Self { receiver, topic }
-    }
-
-    pub fn get_topic(&self) -> &String {
-        &self.topic
-    }
-
-    pub fn resubscribe(&self) -> Self {
-        Self {
-            receiver: self.receiver.resubscribe(),
-            topic: self.topic.clone(),
-        }
-    }
-}
 
 const STATUS_DEBOUNCE: Duration = Duration::from_secs(10);
 pub struct MQTTManager {

@@ -23,5 +23,6 @@ serde_yaml = "0.9.25"
 strum_macros = "0.25.2"
 thiserror = "1.0.48"
 tokio = { version = "1.32.0", features = ["macros", "rt-multi-thread"] }
+tokio-stream = { version = "0.1.14", features = ["sync"] }
 tracing = "0.1.37"
 veil = "0.1.6"

@@ -44,6 +44,15 @@ pub enum Error {
         #[source] Option<Arc<Box<dyn std::error::Error + Send + Sync>>>,
     ),
 
+    /// Something in the process of reading and processing messages for a subscription failed.
+    #[error("Subscription error on topic {topic}: {message}{err}", err = maybe!(.source))]
+    SubscriptionError {
+        topic: String,
+        message: String,
+        #[source]
+        source: Option<Arc<Box<dyn std::error::Error + Send + Sync>>>,
+    },
+
     /// A manager has been shut down and should no longer be used.
     #[error("Manager has been shut down{err}", err = maybe!(.0))]
     ManagerShutDown(Option<Box<Error>>),
