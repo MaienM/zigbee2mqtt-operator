@@ -1,3 +1,3 @@
 mod mqtt;
 
-pub use mqtt::{MQTTCredentials, MQTTManager, MQTTOptions};
+pub use mqtt::{MQTTCredentials, MQTTManager, MQTTOptions, MQTTStatus};

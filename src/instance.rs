@@ -10,7 +10,8 @@ use crate::{
     crds::Instance,
     event_manager::EventManager,
     ext::ResourceLocalExt,
-    mqtt::{MQTTCredentials, MQTTManager, MQTTOptions},
+    mqtt::{MQTTCredentials, MQTTManager, MQTTOptions, MQTTStatus},
+    status_manager::StatusManager,
     Context, Error, Reconciler,
 };
 
@@ -56,11 +57,32 @@ impl Reconciler for Instance {
                 format!("status reporter for instance {id}", id = self.id()),
                 {
                     let eventmanager = EventManager::new(ctx.client.clone(), self);
+                    let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
                     async move {
+                        statusmanager.update(|s| {
+                            s.broker = false;
+                        });
+                        statusmanager.sync().await;
+
                         loop {
                             match status_receiver.recv().await {
                                 Some(event) => {
                                     eventmanager.publish((&event).into()).await;
+                                    statusmanager.update(|s| {
+                                        match event {
+                                            MQTTStatus::Connected => {
+                                                s.broker = true;
+                                            }
+                                            MQTTStatus::Stopped
+                                            | MQTTStatus::ConnectionClosed
+                                            | MQTTStatus::ConnectionFailed(_)
+                                            | MQTTStatus::ConnectionRefused(_) => {
+                                                s.broker = false;
+                                            }
+                                            _ => {}
+                                        };
+                                    });
+                                    statusmanager.sync().await;
                                 }
                                 None => {
                                     break;

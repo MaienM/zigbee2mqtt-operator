@@ -7,6 +7,7 @@ use futures::{
 use k8s_openapi::NamespaceResourceScope;
 use kube::{
     api::ListParams,
+    core::object::HasStatus,
     runtime::{
         controller::Action,
         finalizer::{finalizer, Event as Finalizer},
@@ -25,8 +26,16 @@ pub static FINALIZER: &str = "zigbee2mqtt.maienm.com";
 
 async fn reconcile<T>(resource: Arc<T>, ctx: Arc<Context>) -> Result<Action, Error>
 where
-    T: Resource + Clone + CustomResourceExt + Debug + DeserializeOwned + Reconciler + Serialize,
+    T: Resource
+        + Clone
+        + CustomResourceExt
+        + Debug
+        + DeserializeOwned
+        + HasStatus
+        + Reconciler
+        + Serialize,
     T: Resource<Scope = NamespaceResourceScope>,
+    <T as HasStatus>::Status: Default + Clone + Serialize + PartialEq,
     <T as Resource>::DynamicType: Default,
 {
     let ns = resource.namespace().unwrap();
@@ -62,11 +71,13 @@ where
         + CustomResourceExt
         + Debug
         + DeserializeOwned
+        + HasStatus
         + Reconciler
         + Send
         + Serialize
         + Sync,
     T: Resource<Scope = NamespaceResourceScope>,
+    <T as HasStatus>::Status: Default + Clone + Serialize + PartialEq + Send,
     <T as Resource>::DynamicType: Default + Eq + Hash + Clone + Debug + Unpin,
 {
     let api = Api::<T>::all(client);

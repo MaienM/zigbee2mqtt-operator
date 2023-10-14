@@ -2,6 +2,7 @@ use std::{collections::HashMap, env, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use kube::{
+    core::object::HasStatus,
     runtime::{controller::Action, finalizer::Error as FinalizerError},
     Client, Resource,
 };
@@ -14,6 +15,7 @@ pub mod event_manager;
 pub mod ext;
 mod instance;
 mod mqtt;
+pub mod status_manager;
 
 static NAME: Lazy<String> = Lazy::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -70,7 +72,7 @@ pub struct State {
 }
 
 #[async_trait]
-pub trait Reconciler: Resource + Sized {
+pub trait Reconciler: Resource + HasStatus + Sized {
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, Error>;
     async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, Error>;
 }

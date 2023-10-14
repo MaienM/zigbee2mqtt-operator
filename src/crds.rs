@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
     version = "v1",
     kind = "Instance",
     plural = "instances",
-    namespaced
+    namespaced,
+    status = "InstanceStatus"
 )]
 pub struct InstanceSpec {
     /// The host of the MQTT broker.
@@ -31,6 +32,11 @@ pub struct InstanceSpecCredentials {
     pub username: String,
     /// The password to authenticate with.
     pub password: String,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
+pub struct InstanceStatus {
+    /// Whether there is an active connection with the MQTT broker.
+    pub broker: bool,
 }
 fn default_instance_port() -> u16 {
     1883
