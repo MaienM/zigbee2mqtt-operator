@@ -27,6 +27,8 @@
               "rustfmt"
             ])
             fenix.packages.${system}.rust-analyzer
+
+            pkgs.kubectl
           ];
         };
       });
