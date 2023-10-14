@@ -17,6 +17,7 @@ use veil::Redact;
 
 use crate::{
     event_manager::{EventCore, EventType},
+    sync_utils::LockableNotify,
     Error, TIMEOUT,
 };
 
@@ -240,6 +241,7 @@ pub struct MQTTManager {
     event_sender: Mutex<broadcast::Sender<Event>>,
     status_sender: Mutex<mpsc::UnboundedSender<MQTTStatus>>,
     subscriptions: Mutex<HashMap<String, Arc<Mutex<broadcast::Sender<Publish>>>>>,
+    subscription_lock: LockableNotify,
 }
 impl MQTTManager {
     pub async fn new(
@@ -330,6 +332,7 @@ impl MQTTManager {
             event_sender: Mutex::new(broadcast::channel(16).0),
             status_sender: Mutex::new(status_sender),
             subscriptions: Mutex::new(HashMap::new()),
+            subscription_lock: LockableNotify::new(),
         });
 
         Arc::new(spawn({
@@ -447,6 +450,10 @@ impl MQTTManager {
                                     break;
                                 }
 
+                                Event::Incoming(Packet::SubAck(_) | Packet::UnsubAck(_)) => {
+                                    this.subscription_lock.notify();
+                                }
+
                                 _ => {}
                             };
 
@@ -519,6 +526,7 @@ impl MQTTManager {
 
                         let mut subscriptions = this.subscriptions.lock().await;
                         let client = this.client.lock().await;
+                        let notify = this.subscription_lock.lock().await;
                         debug_span!("unsubscribing", id = this.id, topic);
                         if let Err(err) = client.unsubscribe(topic.clone()).await {
                             let _ = this.shutdown_reason.set(Some(Box::new(Error::MQTTError(
@@ -526,6 +534,7 @@ impl MQTTManager {
                                 Some(Arc::new(Box::new(err))),
                             ))));
                         }
+                        notify.notified().await;
                         subscriptions.remove(&topic);
                     }
                 });
@@ -535,6 +544,7 @@ impl MQTTManager {
         };
 
         // Always send a subscription event to the server regardless of whether there already was an active subscription as this will trigger a re-send of retained messages.
+        let notify = self.subscription_lock.lock().await;
         debug_span!("subscribing", id = self.id, topic);
         self.client
             .lock()
@@ -547,6 +557,7 @@ impl MQTTManager {
                     Some(Arc::new(Box::new(err))),
                 )
             })?;
+        notify.notified().await;
 
         return Ok(TopicSubscription::new(subscription, topic.to_string()));
     }

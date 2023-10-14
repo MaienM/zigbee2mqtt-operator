@@ -18,6 +18,7 @@ pub mod ext;
 mod instance;
 mod mqtt;
 pub mod status_manager;
+mod sync_utils;
 
 static NAME: Lazy<String> = Lazy::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
 const TIMEOUT: Duration = Duration::from_secs(5);
