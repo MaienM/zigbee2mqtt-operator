@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, env, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use kube::{
@@ -6,14 +6,16 @@ use kube::{
     Client, Resource,
 };
 use mqtt::MQTTManager;
+use once_cell::sync::Lazy;
 use thiserror::Error;
-use tokio::sync::Mutex;
 
 pub mod crds;
+pub mod event_manager;
 pub mod ext;
 mod instance;
 mod mqtt;
 
+static NAME: Lazy<String> = Lazy::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 macro_rules! maybe {
@@ -40,6 +42,10 @@ pub enum Error {
     /// A manager has been shut down and should no longer be used.
     #[error("Manager has been shut down{err}", err = maybe!(.0))]
     ManagerShutDown(Option<Box<Error>>),
+
+    /// Some invariant failed. This probably indicates a bug, and it will cause the affected subsystem to be restarted to get back to a known state.
+    #[error("Invariant failed: {0}{err}", err = maybe!(.1))]
+    InvariantFailed(String, Option<Box<Error>>),
 
     /// Something prevented the requested action from completing successfully. This is the catch-all for all errors that don't fit any of the more specific types.
     #[error("Action failed: {0}")]
@@ -68,3 +74,23 @@ pub trait Reconciler: Resource + Sized {
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, Error>;
     async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, Error>;
 }
+
+macro_rules! background_task {
+    ($name:expr, $run:block, $on_stop:block) => {{
+        let run = $run;
+        let on_stop = $on_stop;
+        async move {
+            let name = stringify!($name);
+            let result: Result<(), Error> = run.await;
+            let error = match result {
+                Ok(_) => Error::InvariantFailed(format!("{name} closed"), None),
+                Err(err) => {
+                    Error::InvariantFailed(format!("{name} encountered error"), Some(Box::new(err)))
+                }
+            };
+            on_stop(error).await;
+        }
+    }};
+}
+pub(crate) use background_task;
+use tokio::sync::Mutex;

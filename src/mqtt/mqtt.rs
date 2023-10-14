@@ -3,19 +3,22 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use derive_more::{Deref, DerefMut};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use rumqttc::{
-    AsyncClient as MqttClient, ClientError, ConnAck, ConnectReturnCode, Event, EventLoop,
-    MqttOptions, Outgoing, Packet, Publish, QoS, Request,
+    AsyncClient as MqttClient, ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event,
+    EventLoop, MqttOptions, Outgoing, Packet, Publish, QoS, Request,
 };
 use tokio::{
     select, spawn,
-    sync::{broadcast, watch, Mutex, OnceCell},
+    sync::{broadcast, mpsc, watch, Mutex, OnceCell},
     task::JoinHandle,
-    time::sleep,
+    time::{sleep, Instant},
 };
 use tracing::{debug_span, error_span, info_span, warn_span};
 use veil::Redact;
 
-use crate::{Error, TIMEOUT};
+use crate::{
+    event_manager::{EventCore, EventType},
+    Error, TIMEOUT,
+};
 
 /// Check whether a topic matches a pattern following the MQTT wildcard rules.
 fn topic_match(pattern: &str, topic: &String) -> bool {
@@ -39,6 +42,115 @@ fn topic_match(pattern: &str, topic: &String) -> bool {
         }
     }
     return true;
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum MQTTStatus {
+    Connecting,
+    Connected,
+    Stopped,
+    ConnectionClosed,
+    ConnectionFailed(String),
+    ConnectionRefused(String),
+}
+impl Into<EventCore> for &MQTTStatus {
+    fn into(self) -> EventCore {
+        let action = "Connecting".to_string();
+        return match self {
+            MQTTStatus::Connecting => EventCore {
+                action,
+                note: Some("connecting to broker".into()),
+                reason: "Created".into(),
+                type_: EventType::Normal,
+                ..EventCore::default()
+            },
+            MQTTStatus::Connected => EventCore {
+                action,
+                note: Some("successfully connected to broker".into()),
+                reason: "Created".into(),
+                type_: EventType::Normal,
+                ..EventCore::default()
+            },
+            MQTTStatus::Stopped => EventCore {
+                action,
+                note: Some("disconnected from broker".into()),
+                reason: "Deleted".into(),
+                type_: EventType::Normal,
+                ..EventCore::default()
+            },
+            MQTTStatus::ConnectionClosed => EventCore {
+                action,
+                note: Some("connection closed by broker.".into()),
+                reason: "Disconnected".to_string(),
+                type_: EventType::Warning,
+                ..EventCore::default()
+            },
+            MQTTStatus::ConnectionFailed(err) => EventCore {
+                action,
+                note: Some(format!("connection failed: {err}")),
+                reason: "Created".into(),
+                type_: EventType::Warning,
+                ..EventCore::default()
+            },
+            MQTTStatus::ConnectionRefused(err) => EventCore {
+                action,
+                note: Some(format!("connection refused: {err}")),
+                reason: "Created".into(),
+                type_: EventType::Warning,
+                ..EventCore::default()
+            },
+        };
+    }
+}
+
+impl TryFrom<&Event> for MQTTStatus {
+    type Error = ();
+
+    fn try_from(value: &Event) -> Result<Self, Self::Error> {
+        match value {
+            Event::Incoming(Packet::ConnAck(c)) => Ok(c.into()),
+            Event::Incoming(Packet::Disconnect) => Ok(MQTTStatus::ConnectionClosed),
+            Event::Outgoing(Outgoing::Disconnect) => Ok(MQTTStatus::Stopped),
+            _ => Err(()),
+        }
+    }
+}
+impl From<&ConnectionError> for MQTTStatus {
+    fn from(value: &ConnectionError) -> Self {
+        match value {
+            ConnectionError::ConnectionRefused(err) => err.into(),
+            err => MQTTStatus::ConnectionFailed(err.to_string()),
+        }
+    }
+}
+impl From<&ConnAck> for MQTTStatus {
+    fn from(value: &ConnAck) -> Self {
+        match value.code {
+            _ => (&value.code).into(),
+        }
+    }
+}
+impl From<&ConnectReturnCode> for MQTTStatus {
+    fn from(value: &ConnectReturnCode) -> Self {
+        match value {
+            ConnectReturnCode::Success => MQTTStatus::Connected,
+            ConnectReturnCode::RefusedProtocolVersion => {
+                MQTTStatus::ConnectionRefused("invalid protocol version".to_string())
+            }
+            ConnectReturnCode::BadClientId => {
+                MQTTStatus::ConnectionRefused("invalid client id".to_string())
+            }
+            ConnectReturnCode::ServiceUnavailable => {
+                MQTTStatus::ConnectionRefused("service unavailable".to_string())
+            }
+            ConnectReturnCode::BadUserNamePassword => {
+                MQTTStatus::ConnectionRefused("bad username/password".to_string())
+            }
+            ConnectReturnCode::NotAuthorized => {
+                MQTTStatus::ConnectionRefused("not authorized".to_string())
+            }
+        }
+    }
 }
 
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -94,7 +206,6 @@ macro_rules! assert_unchanged {
     };
 }
 pub(crate) use assert_unchanged;
-
 #[derive(Deref, DerefMut)]
 pub struct TopicSubscription {
     #[deref]
@@ -119,6 +230,7 @@ impl TopicSubscription {
     }
 }
 
+const STATUS_DEBOUNCE: Duration = Duration::from_secs(10);
 pub struct MQTTManager {
     id: String,
     options: Mutex<MQTTOptions>,
@@ -126,10 +238,15 @@ pub struct MQTTManager {
     shutdown_reason: OnceCell<Option<Box<Error>>>,
     shutdown_done: Mutex<watch::Receiver<bool>>,
     event_sender: Mutex<broadcast::Sender<Event>>,
+    status_sender: Mutex<mpsc::UnboundedSender<MQTTStatus>>,
     subscriptions: Mutex<HashMap<String, Arc<Mutex<broadcast::Sender<Publish>>>>>,
 }
 impl MQTTManager {
-    pub async fn new(options: MQTTOptions) -> Result<Arc<Self>, Error> {
+    pub async fn new(
+        options: MQTTOptions,
+    ) -> Result<(Arc<Self>, mpsc::UnboundedReceiver<MQTTStatus>), Error> {
+        let (status_sender, status_receiver) = mpsc::unbounded_channel();
+
         let id = format!(
             "{id}#{random}",
             id = options.id,
@@ -162,6 +279,7 @@ impl MQTTManager {
 
         // We want a persistent session for when we need to reconnect due to connection issues/credential changes, but we don't want state from an earlier MQTTManager.
         let mut mqttoptions = options.to_rumqtt();
+        let _ = status_sender.send(MQTTStatus::Connecting);
 
         // To do this we first connect with clean_session=true to clear any existing session for this client id, which should result in session_present=false regardless of whether a session existed.
         debug_span!("clearing old session", ?id);
@@ -199,6 +317,7 @@ impl MQTTManager {
                 session_present: true,
             })))
         );
+        let _ = status_sender.send(MQTTStatus::Connected);
 
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
 
@@ -209,6 +328,7 @@ impl MQTTManager {
             shutdown_reason: OnceCell::new(),
             shutdown_done: Mutex::new(shutdown_receiver),
             event_sender: Mutex::new(broadcast::channel(16).0),
+            status_sender: Mutex::new(status_sender),
             subscriptions: Mutex::new(HashMap::new()),
         });
 
@@ -252,11 +372,13 @@ impl MQTTManager {
                     };
                 }
 
+                // Send out a final event indicating that we've stopped.
+                let _ = this.status_sender.lock().await.send(MQTTStatus::Stopped);
                 let _ = shutdown_sender.send(true);
             }
         }));
 
-        return Ok(inst);
+        return Ok((inst, status_receiver));
     }
 
     pub async fn update_options(self: &Arc<Self>, newoptions: MQTTOptions) -> Result<(), Error> {
@@ -293,11 +415,15 @@ impl MQTTManager {
         return spawn({
             let this = self.clone();
             async move {
+                let mut last = (Instant::now(), MQTTStatus::Connecting);
+                let _ = this.status_sender.lock().await.send(last.1.clone());
                 loop {
-                    match eventloop.poll().await {
+                    let status = match eventloop.poll().await {
                         Ok(event) => {
                             debug_span!("mqtt event", id = this.id, ?event);
                             let _ = this.event_sender.lock().await.send(event.clone());
+
+                            let status = (&event).try_into().ok();
 
                             match event {
                                 Event::Incoming(Packet::ConnAck(ref ack)) => {
@@ -323,11 +449,25 @@ impl MQTTManager {
 
                                 _ => {}
                             };
+
+                            status
                         }
                         Err(err) => {
+                            let status: MQTTStatus = (&err).into();
+
+                            // (Some of) these are retried immediately, potentially leading to many attempts per second, so we throttle the rate they are logged/emitted at to avoid spamming.
+                            if status == last.1 && last.0.elapsed() < STATUS_DEBOUNCE {
+                                continue;
+                            }
+
                             error_span!("mqtt error", id = this.id, ?err);
+                            Some(status)
                         }
                     };
+                    if let Some(status) = status {
+                        last = (Instant::now(), status.clone());
+                        let _ = this.status_sender.lock().await.send(status);
+                    }
                 }
             }
         });

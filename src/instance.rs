@@ -2,11 +2,13 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use kube::runtime::controller::Action;
-use tokio::time::timeout;
-use tracing::info_span;
+use tokio::{spawn, time::timeout};
+use tracing::{error_span, info_span};
 
 use crate::{
+    background_task,
     crds::Instance,
+    event_manager::EventManager,
     ext::ResourceLocalExt,
     mqtt::{MQTTCredentials, MQTTManager, MQTTOptions},
     Context, Error, Reconciler,
@@ -41,13 +43,45 @@ impl Reconciler for Instance {
             _ => {}
         }
         if let None = ctx.state.managers.lock().await.get(&self.full_name()) {
-            let manager = match timeout(Duration::from_secs(30), MQTTManager::new(options)).await {
-                Ok(result) => result,
-                Err(_) => Err(Error::ActionFailed(
-                    "timeout while starting manager instance".to_string(),
-                    None,
-                )),
-            }?;
+            let (manager, mut status_receiver) =
+                match timeout(Duration::from_secs(30), MQTTManager::new(options)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(Error::ActionFailed(
+                        "timeout while starting manager instance".to_string(),
+                        None,
+                    )),
+                }?;
+
+            spawn(background_task!(
+                format!("status reporter for instance {id}", id = self.id()),
+                {
+                    let eventmanager = EventManager::new(ctx.client.clone(), self);
+                    async move {
+                        loop {
+                            match status_receiver.recv().await {
+                                Some(event) => {
+                                    eventmanager.publish((&event).into()).await;
+                                }
+                                None => {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                },
+                {
+                    let state = ctx.state.clone();
+                    let manager = manager.clone();
+                    let name = self.full_name();
+                    |err| async move {
+                        error_span!("status reporter for instance stopped", ?err);
+                        manager.close(Some(Box::new(err))).await;
+                        state.managers.lock().await.remove(&name);
+                    }
+                }
+            ));
+
             ctx.state
                 .managers
                 .lock()
