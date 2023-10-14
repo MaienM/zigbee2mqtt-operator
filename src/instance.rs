@@ -12,7 +12,7 @@ use crate::{
     ext::ResourceLocalExt,
     mqtt::{MQTTCredentials, MQTTManager, MQTTOptions, MQTTStatus},
     status_manager::StatusManager,
-    Context, Error, EmittableResult, EmittedError, Reconciler,
+    Context, EmittableResult, EmittedError, Error, Reconciler,
 };
 
 #[async_trait]
@@ -29,8 +29,18 @@ impl Reconciler for Instance {
 
         if let Some(cred) = &self.spec.credentials {
             options.credentials = Some(MQTTCredentials {
-                username: cred.username.clone(),
-                password: cred.password.clone(),
+                username: cred
+                    .username
+                    .get(&ctx.client, self)
+                    .await
+                    .emit_event_with_path(&em, "spec.credentials.username")
+                    .await?,
+                password: cred
+                    .password
+                    .get(&ctx.client, self)
+                    .await
+                    .emit_event_with_path(&em, "spec.credentials.password")
+                    .await?,
             });
         }
 

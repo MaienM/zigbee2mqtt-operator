@@ -37,6 +37,10 @@ pub enum Error {
     #[error("Finalizer error: {0}")]
     FinalizerError(#[source] Arc<Box<FinalizerError<Error>>>),
 
+    /// A misconfiguration of a Kubernetes resource. This is only for problems that require a change to a resource to resolve, not for temporary failures that might resolve by themselves.
+    #[error("Invalid resource: {0}")]
+    InvalidResource(String),
+
     /// The MQTT broker responded in an unexpected manner.
     #[error("MQTT error: {0}{err}", err = maybe!(.1))]
     MQTTError(

@@ -1,6 +1,72 @@
-use kube::CustomResource;
+use std::{str::from_utf8, sync::Arc};
+
+use k8s_openapi::api::core::v1::Secret;
+use kube::{Api, Client, CustomResource, Resource, ResourceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::{ext::ResourceLocalExt, Error};
+
+///
+/// A value that can be indirect, like environment variables.
+///
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub enum Value {
+    #[serde(rename = "value")]
+    Inline(String),
+    #[serde(rename = "valueFrom", rename_all = "camelCase")]
+    Secret { secret_key_ref: SecretKeyRef },
+}
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct SecretKeyRef {
+    namespace: Option<String>,
+    name: String,
+    key: String,
+}
+impl Value {
+    /// Get the current value.
+    pub async fn get<T>(&self, client: &Client, resource: &T) -> Result<String, Error>
+    where
+        T: Resource + ResourceLocalExt,
+    {
+        return match self {
+            Value::Inline(v) => Ok(v.clone()),
+            Value::Secret {
+                secret_key_ref: skr,
+            } => {
+                let namespace = &*skr
+                    .namespace
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| resource.namespace().clone().unwrap())
+                    .to_string();
+                let key = &skr.key;
+                Api::<Secret>::namespaced(client.clone(), namespace)
+                    .get(&*skr.name)
+                    .await
+                    .map_err(|err| {
+                        Error::ActionFailed(
+                            "failed to get secret".to_string(),
+                            Some(Arc::new(Box::new(err))),
+                        )
+                    })?
+                    .data
+                    .unwrap_or_default()
+                    .get(&skr.key)
+                    .map(|d| from_utf8(&d.0).map(&str::to_string))
+                    .ok_or(Error::InvalidResource(format!(
+                        "secret must have data with key {key}"
+                    )))?
+                    .map_err(|err| {
+                        Error::ActionFailed(
+                            "failed to parse secret data".to_string(),
+                            Some(Arc::new(Box::new(err))),
+                        )
+                    })
+            }
+        };
+    }
+}
 
 ///
 /// A zigbee2mqtt instance.
@@ -29,9 +95,9 @@ pub struct InstanceSpec {
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct InstanceSpecCredentials {
     /// The username to authenticate with.
-    pub username: String,
+    pub username: Value,
     /// The password to authenticate with.
-    pub password: String,
+    pub password: Value,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
 pub struct InstanceStatus {
