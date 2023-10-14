@@ -43,8 +43,16 @@ where
 
     finalizer(&api, FINALIZER, resource, |event| async {
         match event {
-            Finalizer::Apply(doc) => doc.reconcile(ctx.clone()).await,
-            Finalizer::Cleanup(doc) => doc.cleanup(ctx.clone()).await,
+            Finalizer::Apply(doc) => {
+                let result = doc.reconcile(ctx.clone()).await;
+
+                result.map_err(|err| err.0)
+            }
+            Finalizer::Cleanup(doc) => {
+                let result = doc.cleanup(ctx.clone()).await;
+
+                result.map_err(|err| err.0)
+            }
         }
     })
     .await

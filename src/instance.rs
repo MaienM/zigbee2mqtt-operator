@@ -12,12 +12,14 @@ use crate::{
     ext::ResourceLocalExt,
     mqtt::{MQTTCredentials, MQTTManager, MQTTOptions, MQTTStatus},
     status_manager::StatusManager,
-    Context, Error, Reconciler,
+    Context, Error, EmittableResult, EmittedError, Reconciler,
 };
 
 #[async_trait]
 impl Reconciler for Instance {
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, Error> {
+    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
+        let em = EventManager::new(ctx.client.clone(), self);
+
         let mut options = MQTTOptions {
             id: self.full_name(),
             host: self.spec.host.clone(),
@@ -51,7 +53,9 @@ impl Reconciler for Instance {
                         "timeout while starting manager instance".to_string(),
                         None,
                     )),
-                }?;
+                }
+                .emit_event_with_path(&em, "spec")
+                .await?;
 
             spawn(background_task!(
                 format!("status reporter for instance {id}", id = self.id()),
@@ -114,7 +118,7 @@ impl Reconciler for Instance {
         return Ok(Action::requeue(Duration::from_secs(15)));
     }
 
-    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, Error> {
+    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
         let manager = ctx.state.managers.lock().await.remove(&self.full_name());
         if let Some(manager) = manager {
             manager.close(None).await;

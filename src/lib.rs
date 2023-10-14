@@ -1,6 +1,7 @@
 use std::{collections::HashMap, env, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use event_manager::{EventCore, EventManager, EventType};
 use kube::{
     core::object::HasStatus,
     runtime::{controller::Action, finalizer::Error as FinalizerError},
@@ -9,6 +10,7 @@ use kube::{
 use mqtt::MQTTManager;
 use once_cell::sync::Lazy;
 use thiserror::Error;
+use tokio::sync::Mutex;
 
 pub mod crds;
 pub mod event_manager;
@@ -57,6 +59,64 @@ pub enum Error {
     ),
 }
 
+/// An [`Error`] for which an [`Event`] has already been published.
+pub struct EmittedError(pub Error);
+#[async_trait]
+pub trait EmittableResult<V> {
+    /// Publish error.
+    async fn emit_event<F>(self, manager: &EventManager) -> Result<V, EmittedError>;
+
+    /// Shorthand version of [`EmittableResult::emit_event_map`] which sets only [`EventCore::field_path`].
+    async fn emit_event_with_path(
+        self,
+        manager: &EventManager,
+        field_path: &str,
+    ) -> Result<V, EmittedError>;
+
+    /// Publish error, allowing closure to alter EventCore beforehand. See [`EventCore::field_path`].
+    async fn emit_event_map<F>(self, manager: &EventManager, f: F) -> Result<V, EmittedError>
+    where
+        F: FnOnce(&mut EventCore) -> () + Send;
+}
+#[async_trait]
+impl<V> EmittableResult<V> for Result<V, Error>
+where
+    V: Send,
+{
+    async fn emit_event<F>(self, manager: &EventManager) -> Result<V, EmittedError> {
+        self.emit_event_map(manager, |_| {}).await
+    }
+
+    async fn emit_event_with_path(
+        self,
+        manager: &EventManager,
+        field_path: &str,
+    ) -> Result<V, EmittedError> {
+        self.emit_event_map(manager, |event| {
+            event.field_path = Some(field_path.to_string());
+        })
+        .await
+    }
+
+    async fn emit_event_map<F>(self, manager: &EventManager, f: F) -> Result<V, EmittedError>
+    where
+        F: FnOnce(&mut EventCore) -> () + Send,
+    {
+        if let Err(ref error) = self {
+            let mut event = EventCore {
+                action: "Reconciling".to_string(),
+                note: Some(error.to_string()),
+                reason: "Created".to_string(),
+                type_: EventType::Warning,
+                ..EventCore::default()
+            };
+            f(&mut event);
+            manager.publish_nolog(event).await;
+        }
+        self.map_err(EmittedError)
+    }
+}
+
 #[derive(Clone)]
 pub struct Context {
     /// Kubernetes client
@@ -73,8 +133,8 @@ pub struct State {
 
 #[async_trait]
 pub trait Reconciler: Resource + HasStatus + Sized {
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, Error>;
-    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, Error>;
+    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError>;
+    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, EmittedError>;
 }
 
 macro_rules! background_task {
@@ -95,4 +155,3 @@ macro_rules! background_task {
     }};
 }
 pub(crate) use background_task;
-use tokio::sync::Mutex;
