@@ -10,7 +10,7 @@ use crate::{
     crds::Instance,
     event_manager::EventManager,
     ext::ResourceLocalExt,
-    mqtt::{MQTTCredentials, MQTTManager, MQTTOptions, MQTTStatus},
+    mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
     status_manager::StatusManager,
     Context, EmittableResult, EmittedError, Error, Reconciler,
 };
@@ -20,15 +20,16 @@ impl Reconciler for Instance {
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
         let em = EventManager::new(ctx.client.clone(), self);
 
-        let mut options = MQTTOptions {
+        let mut options = Options {
             id: self.full_name(),
             host: self.spec.host.clone(),
             port: self.spec.port,
             credentials: None,
+            base_topic: self.spec.base_topic.clone(),
         };
 
         if let Some(cred) = &self.spec.credentials {
-            options.credentials = Some(MQTTCredentials {
+            options.credentials = Some(Credentials {
                 username: cred
                     .username
                     .get(&ctx.client, self)
@@ -57,7 +58,7 @@ impl Reconciler for Instance {
         }
         if let None = ctx.state.managers.lock().await.get(&self.full_name()) {
             let (manager, mut status_receiver) =
-                match timeout(Duration::from_secs(30), MQTTManager::new(options)).await {
+                match timeout(Duration::from_secs(30), Manager::new(options)).await {
                     Ok(result) => result,
                     Err(_) => Err(Error::ActionFailed(
                         "timeout while starting manager instance".to_string(),
@@ -84,16 +85,27 @@ impl Reconciler for Instance {
                                     eventmanager.publish((&event).into()).await;
                                     statusmanager.update(|s| {
                                         match event {
-                                            MQTTStatus::Connected => {
+                                            Status::ConnectionStatus(ConnectionStatus::Active) => {
                                                 s.broker = true;
                                             }
-                                            MQTTStatus::Stopped
-                                            | MQTTStatus::ConnectionClosed
-                                            | MQTTStatus::ConnectionFailed(_)
-                                            | MQTTStatus::ConnectionRefused(_) => {
+                                            Status::ConnectionStatus(
+                                                ConnectionStatus::Inactive
+                                                | ConnectionStatus::Closed
+                                                | ConnectionStatus::Failed(_)
+                                                | ConnectionStatus::Refused(_),
+                                            ) => {
                                                 s.broker = false;
+                                                s.zigbee2mqtt = false;
                                             }
-                                            _ => {}
+                                            Status::ConnectionStatus(_) => {}
+
+                                            Status::Z2MStatus(Z2MStatus::HealthOk) => {
+                                                s.broker = true;
+                                                s.zigbee2mqtt = true;
+                                            }
+                                            Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
+                                                s.zigbee2mqtt = false;
+                                            }
                                         };
                                     });
                                     statusmanager.sync().await;

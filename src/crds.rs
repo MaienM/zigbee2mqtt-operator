@@ -103,6 +103,8 @@ pub struct InstanceSpecCredentials {
 pub struct InstanceStatus {
     /// Whether there is an active connection with the MQTT broker.
     pub broker: bool,
+    /// Whether zigbee2mqtt is reachable and healthy.
+    pub zigbee2mqtt: bool,
 }
 fn default_instance_port() -> u16 {
     1883

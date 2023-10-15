@@ -7,7 +7,7 @@ use kube::{
     runtime::{controller::Action, finalizer::Error as FinalizerError},
     Client, Resource,
 };
-use mqtt::MQTTManager;
+use mqtt::Manager;
 use once_cell::sync::Lazy;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -47,6 +47,10 @@ pub enum Error {
         String,
         #[source] Option<Arc<Box<dyn std::error::Error + Send + Sync>>>,
     ),
+
+    /// The Zigbee2MQTT application responded in an unexpected manner.
+    #[error("Zigbee2MQTT error: {0}")]
+    Zigbee2MQTTError(String),
 
     /// Something in the process of reading and processing messages for a subscription failed.
     #[error("Subscription error on topic {topic}: {message}{err}", err = maybe!(.source))]
@@ -141,8 +145,8 @@ pub struct Context {
 
 #[derive(Default)]
 pub struct State {
-    /// The manager for each instance.
-    pub managers: Mutex<HashMap<String, Arc<MQTTManager>>>,
+    /// The Zigbee2MQTT manager for each instance.
+    pub managers: Mutex<HashMap<String, Arc<Manager>>>,
 }
 
 #[async_trait]
