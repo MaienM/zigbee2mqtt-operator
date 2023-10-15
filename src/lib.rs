@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, fmt::Debug, sync::Arc, time::Duration};
+use std::{env, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use event_manager::{EventCore, EventManager, EventType};
@@ -9,16 +9,16 @@ use kube::{
 };
 use mqtt::Manager;
 use once_cell::sync::Lazy;
+use sync_utils::AwaitableMap;
 use thiserror::Error;
-use tokio::sync::Mutex;
 
 pub mod crds;
 mod device;
-pub mod event_manager;
+mod event_manager;
 pub mod ext;
 mod instance;
 mod mqtt;
-pub mod status_manager;
+mod status_manager;
 mod sync_utils;
 
 static NAME: Lazy<String> = Lazy::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
@@ -151,10 +151,16 @@ pub struct Context {
     pub state: Arc<State>,
 }
 
-#[derive(Default)]
 pub struct State {
     /// The Zigbee2MQTT manager for each instance.
-    pub managers: Mutex<HashMap<String, Arc<Manager>>>,
+    pub managers: AwaitableMap<Arc<Manager>>,
+}
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            managers: AwaitableMap::new("instance manager".to_string()),
+        }
+    }
 }
 
 #[async_trait]

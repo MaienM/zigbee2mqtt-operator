@@ -18,6 +18,7 @@ use crate::{
 #[async_trait]
 impl Reconciler for Instance {
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
+        let manager_awaitable = ctx.state.managers.get_or_create(self.full_name()).await;
         let em = EventManager::new(ctx.client.clone(), self);
 
         let mut options = Options {
@@ -45,105 +46,118 @@ impl Reconciler for Instance {
             });
         }
 
-        match ctx.state.managers.lock().await.get(&self.full_name()) {
-            Some(manager) => match manager.update_options(options.clone()).await {
-                Ok(_) => {}
+        let manager = match manager_awaitable.get_immediate().await {
+            Some(Ok(manager)) => match manager.update_options(options.clone()).await {
+                Ok(_) => Some(manager),
                 Err(err) => {
                     info_span!("replacing manager", id = self.full_name(), ?err);
-                    ctx.state.managers.lock().await.remove(&self.full_name());
+                    manager_awaitable.clear().await;
                     manager.close(None).await;
+                    None
                 }
             },
-            _ => {}
-        }
-        if let None = ctx.state.managers.lock().await.get(&self.full_name()) {
-            let (manager, mut status_receiver) =
-                match timeout(Duration::from_secs(30), Manager::new(options)).await {
-                    Ok(result) => result,
-                    Err(_) => Err(Error::ActionFailed(
-                        "timeout while starting manager instance".to_string(),
-                        None,
-                    )),
-                }
-                .emit_event_with_path(&em, "spec")
-                .await?;
+            _ => None,
+        };
+        let manager = match manager {
+            Some(manager) => manager,
+            None => {
+                let (manager, mut status_receiver) =
+                    match timeout(Duration::from_secs(30), Manager::new(options)).await {
+                        Ok(result) => result,
+                        Err(_) => Err(Error::ActionFailed(
+                            "timeout while starting manager instance".to_string(),
+                            None,
+                        )),
+                    }
+                    .emit_event_with_path(&em, "spec")
+                    .await?;
 
-            spawn(background_task!(
-                format!("status reporter for instance {id}", id = self.id()),
-                {
-                    let eventmanager = EventManager::new(ctx.client.clone(), self);
-                    let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
-                    async move {
-                        statusmanager.update(|s| {
-                            s.broker = false;
-                        });
-                        statusmanager.sync().await;
+                spawn(background_task!(
+                    format!("status reporter for instance {id}", id = self.id()),
+                    {
+                        let eventmanager = EventManager::new(ctx.client.clone(), self);
+                        let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
+                        let _lock = manager_awaitable.clone();
+                        async move {
+                            let _lock = _lock; // Keep a reference to the manager's AwaitableValue as long as it is in use.
 
-                        loop {
-                            match status_receiver.recv().await {
-                                Some(event) => {
-                                    eventmanager.publish((&event).into()).await;
-                                    statusmanager.update(|s| {
-                                        match event {
-                                            Status::ConnectionStatus(ConnectionStatus::Active) => {
-                                                s.broker = true;
-                                            }
-                                            Status::ConnectionStatus(
-                                                ConnectionStatus::Inactive
-                                                | ConnectionStatus::Closed
-                                                | ConnectionStatus::Failed(_)
-                                                | ConnectionStatus::Refused(_),
-                                            ) => {
-                                                s.broker = false;
-                                                s.zigbee2mqtt = false;
-                                            }
-                                            Status::ConnectionStatus(_) => {}
+                            statusmanager.update(|s| {
+                                s.broker = false;
+                                s.zigbee2mqtt = false;
+                            });
+                            statusmanager.sync().await;
 
-                                            Status::Z2MStatus(Z2MStatus::HealthOk) => {
-                                                s.broker = true;
-                                                s.zigbee2mqtt = true;
-                                            }
-                                            Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
-                                                s.zigbee2mqtt = false;
-                                            }
-                                        };
-                                    });
-                                    statusmanager.sync().await;
-                                }
-                                None => {
-                                    break;
+                            loop {
+                                match status_receiver.recv().await {
+                                    Some(event) => {
+                                        eventmanager.publish((&event).into()).await;
+                                        statusmanager.update(|s| {
+                                            match event {
+                                                Status::ConnectionStatus(
+                                                    ConnectionStatus::Active,
+                                                ) => {
+                                                    s.broker = true;
+                                                }
+                                                Status::ConnectionStatus(
+                                                    ConnectionStatus::Inactive
+                                                    | ConnectionStatus::Closed
+                                                    | ConnectionStatus::Failed(_)
+                                                    | ConnectionStatus::Refused(_),
+                                                ) => {
+                                                    s.broker = false;
+                                                    s.zigbee2mqtt = false;
+                                                }
+                                                Status::ConnectionStatus(_) => {}
+
+                                                Status::Z2MStatus(Z2MStatus::HealthOk) => {
+                                                    s.broker = true;
+                                                    s.zigbee2mqtt = true;
+                                                }
+                                                Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
+                                                    s.zigbee2mqtt = false;
+                                                }
+                                            };
+                                        });
+                                        statusmanager.sync().await;
+                                    }
+                                    None => {
+                                        break;
+                                    }
                                 }
                             }
+                            Ok(())
                         }
-                        Ok(())
+                    },
+                    {
+                        let manager_awaitable = manager_awaitable.clone();
+                        let manager = manager.clone();
+                        |err| async move {
+                            error_span!("status reporter for instance stopped", ?err);
+                            manager_awaitable.clear().await;
+                            let shutdown_reason = manager.close(Some(Box::new(err))).await;
+                            manager_awaitable.invalidate(shutdown_reason).await;
+                        }
                     }
-                },
-                {
-                    let state = ctx.state.clone();
-                    let manager = manager.clone();
-                    let name = self.full_name();
-                    |err| async move {
-                        error_span!("status reporter for instance stopped", ?err);
-                        manager.close(Some(Box::new(err))).await;
-                        state.managers.lock().await.remove(&name);
-                    }
-                }
-            ));
-
-            ctx.state
-                .managers
-                .lock()
-                .await
-                .insert(self.full_name(), manager);
-        }
+                ));
+                manager
+            }
+        };
+        manager_awaitable.set(manager).await;
 
         return Ok(Action::requeue(Duration::from_secs(15)));
     }
 
     async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        let manager = ctx.state.managers.lock().await.remove(&self.full_name());
+        let manager = ctx.state.managers.remove(&self.full_name()).await;
         if let Some(manager) = manager {
-            manager.close(None).await;
+            match manager.get(Duration::from_secs(60)).await {
+                Ok(manager) => {
+                    manager.close(None).await;
+                }
+                Err(_) => {
+                    // If getting the manager timed out this must mean that it was never created successfully, so there is nothing to close/cleanup.
+                }
+            };
         }
         return Ok(Action::requeue(Duration::from_secs(5 * 60)));
     }

@@ -10,7 +10,7 @@ use crate::{
     crds::Device,
     event_manager::{EventCore, EventManager, EventType},
     status_manager::StatusManager,
-    Context, EmittableResult, EmittedError, Error, Reconciler,
+    Context, EmittableResult, EmittedError, Error, Reconciler, TIMEOUT,
 };
 
 struct Difference {
@@ -130,10 +130,11 @@ impl Reconciler for Device {
         });
 
         let instance = format!("{}/{}", self.namespace().unwrap(), self.spec.instance);
-        let managers = ctx.state.managers.lock().await;
-        let manager = managers
-            .get(&instance)
-            .ok_or_else(|| Error::InvalidResource("cannot find instance".to_string()))
+        let manager = ctx
+            .state
+            .managers
+            .get(&instance, TIMEOUT)
+            .await
             .emit_event_with_path(&eventmanager, "spec.instance")
             .await?;
 
