@@ -45,7 +45,6 @@ where
             old: resource.status().cloned(),
             current: resource
                 .status()
-                .clone()
                 .map_or_else(T::Status::default, T::Status::clone),
         };
     }
@@ -54,7 +53,10 @@ where
         self.current = status;
     }
 
-    pub fn update(&mut self, mut func: impl FnMut(&mut T::Status) -> ()) {
+    pub fn update<F>(&mut self, mut func: F)
+    where
+        F: FnMut(&mut T::Status),
+    {
         let mut status = self.current.clone();
         func(&mut status);
         self.set(status);

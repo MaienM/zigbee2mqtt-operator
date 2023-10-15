@@ -95,7 +95,7 @@ pub trait EmittableResult<V> {
     /// Publish error, allowing closure to alter EventCore beforehand. See [`EventCore::field_path`].
     async fn emit_event_map<F>(self, manager: &EventManager, f: F) -> Result<V, EmittedError>
     where
-        F: FnOnce(&mut EventCore) -> () + Send;
+        F: FnOnce(&mut EventCore) + Send;
 
     /// Mark error as published without actually publishing anything. This should only be used in cases where one or more events have already been published for the error manually.
     fn fake_emit_event(self) -> Result<V, EmittedError>;
@@ -122,7 +122,7 @@ where
 
     async fn emit_event_map<F>(self, manager: &EventManager, f: F) -> Result<V, EmittedError>
     where
-        F: FnOnce(&mut EventCore) -> () + Send,
+        F: FnOnce(&mut EventCore) + Send,
     {
         if let Err(ref error) = self {
             let mut event = EventCore {

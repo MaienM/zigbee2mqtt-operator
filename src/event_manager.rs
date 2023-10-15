@@ -38,7 +38,7 @@ impl EventExt for Event {
             regarding.kind.clone().unwrap().to_lowercase(),
             core_id,
         );
-        return Event {
+        Event {
             metadata: ObjectMeta {
                 annotations: None,
                 creation_timestamp: None,
@@ -70,7 +70,7 @@ impl EventExt for Event {
             reporting_instance: Some(NAME.clone()),
             series: None,
             type_: Some(core.type_.to_string()),
-        };
+        }
     }
 }
 
@@ -112,11 +112,11 @@ impl EventManager {
         T: Resource<Scope = NamespaceResourceScope>,
         <T as Resource>::DynamicType: Default,
     {
-        return Self {
+        Self {
             api: Api::namespaced(client, &regarding.namespace().clone().unwrap()),
             id: regarding.id(),
             regarding: regarding.object_ref(&<T as Resource>::DynamicType::default()),
-        };
+        }
     }
 
     pub async fn publish(&self, core: EventCore) {

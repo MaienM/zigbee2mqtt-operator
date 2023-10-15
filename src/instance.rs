@@ -87,43 +87,34 @@ impl Reconciler for Instance {
                             });
                             statusmanager.sync().await;
 
-                            loop {
-                                match status_receiver.recv().await {
-                                    Some(event) => {
-                                        eventmanager.publish((&event).into()).await;
-                                        statusmanager.update(|s| {
-                                            match event {
-                                                Status::ConnectionStatus(
-                                                    ConnectionStatus::Active,
-                                                ) => {
-                                                    s.broker = true;
-                                                }
-                                                Status::ConnectionStatus(
-                                                    ConnectionStatus::Inactive
-                                                    | ConnectionStatus::Closed
-                                                    | ConnectionStatus::Failed(_)
-                                                    | ConnectionStatus::Refused(_),
-                                                ) => {
-                                                    s.broker = false;
-                                                    s.zigbee2mqtt = false;
-                                                }
-                                                Status::ConnectionStatus(_) => {}
+                            while let Some(event) = status_receiver.recv().await {
+                                eventmanager.publish((&event).into()).await;
+                                statusmanager.update(|s| {
+                                    match event {
+                                        Status::ConnectionStatus(ConnectionStatus::Active) => {
+                                            s.broker = true;
+                                        }
+                                        Status::ConnectionStatus(
+                                            ConnectionStatus::Inactive
+                                            | ConnectionStatus::Closed
+                                            | ConnectionStatus::Failed(_)
+                                            | ConnectionStatus::Refused(_),
+                                        ) => {
+                                            s.broker = false;
+                                            s.zigbee2mqtt = false;
+                                        }
+                                        Status::ConnectionStatus(_) => {}
 
-                                                Status::Z2MStatus(Z2MStatus::HealthOk) => {
-                                                    s.broker = true;
-                                                    s.zigbee2mqtt = true;
-                                                }
-                                                Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
-                                                    s.zigbee2mqtt = false;
-                                                }
-                                            };
-                                        });
-                                        statusmanager.sync().await;
-                                    }
-                                    None => {
-                                        break;
-                                    }
-                                }
+                                        Status::Z2MStatus(Z2MStatus::HealthOk) => {
+                                            s.broker = true;
+                                            s.zigbee2mqtt = true;
+                                        }
+                                        Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
+                                            s.zigbee2mqtt = false;
+                                        }
+                                    };
+                                });
+                                statusmanager.sync().await;
                             }
                             Ok(())
                         }

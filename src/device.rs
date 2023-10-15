@@ -52,7 +52,7 @@ fn find_differences(
             actual,
         });
     }
-    return differences;
+    differences
 }
 
 async fn do_sync<F>(
@@ -66,7 +66,7 @@ async fn do_sync<F>(
 where
     F: Future<Output = Result<HashMap<String, Value>, Error>>,
 {
-    let differences = find_differences(&wanted, &actual);
+    let differences = find_differences(wanted, actual);
     for difference in differences.iter() {
         eventmanager
             .publish(EventCore {
@@ -91,7 +91,7 @@ where
         .await
         .emit_event_with_path(eventmanager, field_path)
         .await?;
-    let differences = find_differences(&wanted, &result);
+    let differences = find_differences(wanted, &result);
     for difference in differences.iter() {
         let Difference {
             key,
@@ -116,7 +116,7 @@ where
         )))
         .fake_emit_event();
     }
-    return Ok(());
+    Ok(())
 }
 
 #[async_trait]
@@ -150,7 +150,7 @@ impl Reconciler for Device {
             .unwrap_or_else(|| ieee_address.clone());
 
         let info = manager
-            .get_bridge_device_definition(&ieee_address)
+            .get_bridge_device_definition(ieee_address)
             .await
             .emit_event_with_path(&eventmanager, "spec.ieee_address")
             .await?;
@@ -174,7 +174,7 @@ impl Reconciler for Device {
                     })
                     .await;
             manager
-                .rename_device(&ieee_address, &wanted_friendly_name)
+                .rename_device(ieee_address, &wanted_friendly_name)
                 .await
                 .emit_event_with_path(&eventmanager, "spec.friendly_name")
                 .await?;
@@ -237,7 +237,7 @@ impl Reconciler for Device {
                 &mut eventmanager,
                 "capability",
                 "spec.capabilities",
-                &wanted_capabilities,
+                wanted_capabilities,
                 &current_capabilities,
                 || {
                     let capabilities_manager = capabilities_manager.clone();

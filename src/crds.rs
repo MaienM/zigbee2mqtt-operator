@@ -43,7 +43,7 @@ impl Value {
                     .to_string();
                 let key = &skr.key;
                 Api::<Secret>::namespaced(client.clone(), namespace)
-                    .get(&*skr.name)
+                    .get(&skr.name)
                     .await
                     .map_err(|err| {
                         Error::ActionFailed(
@@ -54,7 +54,7 @@ impl Value {
                     .data
                     .unwrap_or_default()
                     .get(&skr.key)
-                    .map(|d| from_utf8(&d.0).map(&str::to_string))
+                    .map(|d| from_utf8(&d.0).map(str::to_string))
                     .ok_or(Error::InvalidResource(format!(
                         "secret must have data with key {key}"
                     )))?

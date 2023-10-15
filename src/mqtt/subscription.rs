@@ -133,7 +133,7 @@ where
     {
         TopicStream {
             stream: self.stream.filter(move |value| match value {
-                Ok(value) => f(&value),
+                Ok(value) => f(value),
                 Err(_) => true,
             }),
             topic: self.topic,
@@ -221,13 +221,8 @@ where
     /// - the steam closes (which will result in an error, as next_noclose).
     pub async fn last(&mut self, timeout_first: Duration, timeout_interval: Duration) -> St::Item {
         let mut result = Ok(self.next_noclose_timeout(timeout_first).await?);
-        loop {
-            match timeout(timeout_interval, self.next_noclose()).await {
-                Ok(item) => {
-                    result = Ok(item?);
-                }
-                Err(_) => break,
-            }
+        while let Ok(item) = timeout(timeout_interval, self.next_noclose()).await {
+            result = Ok(item?);
         }
         result
     }

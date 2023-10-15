@@ -30,7 +30,7 @@ use crate::{
 };
 
 /// Check whether a topic matches a pattern following the MQTT wildcard rules.
-fn topic_match(pattern: &str, topic: &String) -> bool {
+fn topic_match(pattern: &str, topic: &str) -> bool {
     let pattern_parts = pattern.split('/').collect::<Vec<&str>>();
     let pattern_length = pattern_parts.len();
     let topic_parts = topic.split('/').collect::<Vec<&str>>();
@@ -50,7 +50,7 @@ fn topic_match(pattern: &str, topic: &String) -> bool {
             }
         }
     }
-    return true;
+    true
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -62,10 +62,10 @@ pub enum ConnectionStatus {
     Failed(String),
     Refused(String),
 }
-impl Into<EventCore> for &ConnectionStatus {
-    fn into(self) -> EventCore {
+impl From<&ConnectionStatus> for EventCore {
+    fn from(val: &ConnectionStatus) -> Self {
         let action = "Connecting".to_string();
-        return match self {
+        match val {
             ConnectionStatus::Pending => EventCore {
                 action,
                 note: Some("connecting to broker".into()),
@@ -108,7 +108,7 @@ impl Into<EventCore> for &ConnectionStatus {
                 type_: EventType::Warning,
                 ..EventCore::default()
             },
-        };
+        }
     }
 }
 impl TryFrom<&Event> for ConnectionStatus {
@@ -132,9 +132,7 @@ impl From<&ConnectionError> for ConnectionStatus {
 }
 impl From<&ConnAck> for ConnectionStatus {
     fn from(value: &ConnAck) -> Self {
-        match value.code {
-            _ => (&value.code).into(),
-        }
+        (&value.code).into()
     }
 }
 impl From<&ConnectReturnCode> for ConnectionStatus {
@@ -165,10 +163,10 @@ pub enum Z2MStatus {
     HealthOk,
     HealthError(String),
 }
-impl Into<EventCore> for &Z2MStatus {
-    fn into(self) -> EventCore {
+impl From<&Z2MStatus> for EventCore {
+    fn from(val: &Z2MStatus) -> Self {
         let action = "Healthcheck".to_string();
-        return match self {
+        match val {
             Z2MStatus::HealthOk => EventCore {
                 action,
                 note: Some("zigbee2mqtt healthcheck succeeded".into()),
@@ -183,7 +181,7 @@ impl Into<EventCore> for &Z2MStatus {
                 type_: EventType::Warning,
                 ..EventCore::default()
             },
-        };
+        }
     }
 }
 
@@ -192,12 +190,12 @@ pub enum Status {
     ConnectionStatus(ConnectionStatus),
     Z2MStatus(Z2MStatus),
 }
-impl Into<EventCore> for &Status {
-    fn into(self) -> EventCore {
-        return match self {
+impl From<&Status> for EventCore {
+    fn from(val: &Status) -> Self {
+        match val {
             Status::ConnectionStatus(s) => s.into(),
             Status::Z2MStatus(s) => s.into(),
-        };
+        }
     }
 }
 
@@ -226,7 +224,7 @@ impl Options {
         options.set_keep_alive(Duration::from_secs(15));
         options.set_max_packet_size(50_000, 50_000);
 
-        return options;
+        options
     }
 }
 
@@ -377,7 +375,7 @@ impl Manager {
                 tasks.spawn(background_task!($name, { $run }, {
                     let this = inst.clone();
                     |err| async move {
-                        let _ = this.start_shutdown(Some(Box::new(err)));
+                        let _ = this.start_shutdown(Some(Box::new(err))).await;
                     }
                 }));
             };
@@ -389,7 +387,7 @@ impl Manager {
         spawn_task!("Zigbee2MQTT healthcheck", inst.clone().task_healthcheck());
         drop(tasks);
 
-        return Ok((inst, status_receiver));
+        Ok((inst, status_receiver))
     }
 
     async fn task_main(
@@ -464,10 +462,12 @@ impl Manager {
                     match event {
                         Event::Incoming(Packet::ConnAck(ref ack)) => {
                             if !ack.session_present {
-                                let _ = self.start_shutdown(Some(Box::new(Error::MQTTError(
-                                    "reconnect failed to continue existing session".to_string(),
-                                    None,
-                                ))));
+                                let _ = self
+                                    .start_shutdown(Some(Box::new(Error::MQTTError(
+                                        "reconnect failed to continue existing session".to_string(),
+                                        None,
+                                    ))))
+                                    .await;
                                 break;
                             }
                         }
@@ -560,7 +560,7 @@ impl Manager {
             key_if_changed!(base_topic),
         ]
         .into_iter()
-        .filter_map(|v| v)
+        .flatten()
         .collect();
         if !changes.is_empty() {
             return Err(Error::ActionFailed(
@@ -582,7 +582,7 @@ impl Manager {
 
         client_disconnect_or_warn(&*self.client.lock().await, &self.id).await;
 
-        return Ok(());
+        Ok(())
     }
 
     async fn start_shutdown(self: &Arc<Self>, error: Option<Box<Error>>) {
@@ -608,7 +608,7 @@ impl Manager {
     }
 
     pub fn get_id<'a>(self: &'a Arc<Self>) -> &'a String {
-        return &self.id;
+        &self.id
     }
 
     /// Subscribe to incoming messages on a topic pattern.
@@ -657,10 +657,12 @@ impl Manager {
                         let notify = this.subscription_lock.lock().await;
                         debug_span!("unsubscribing", id = this.id, topic);
                         if let Err(err) = client.unsubscribe(topic.clone()).await {
-                            let _ = this.start_shutdown(Some(Box::new(Error::MQTTError(
-                                format!("unsubscribe from {topic} failed"),
-                                Some(Arc::new(Box::new(err))),
-                            ))));
+                            let _ = this
+                                .start_shutdown(Some(Box::new(Error::MQTTError(
+                                    format!("unsubscribe from {topic} failed"),
+                                    Some(Arc::new(Box::new(err))),
+                                ))))
+                                .await;
                         }
                         notify.notified().await;
                         subscriptions.remove(&topic);
@@ -687,7 +689,7 @@ impl Manager {
             })?;
         notify.notified().await;
 
-        return Ok(TopicSubscription::new(subscription, topic.to_string()));
+        Ok(TopicSubscription::new(subscription, topic.to_string()))
     }
 
     /// Publish a message.

@@ -73,7 +73,7 @@ where
     Action::requeue(Duration::from_secs(60))
 }
 
-async fn start_controller<T>(client: Client, ctx: Arc<Context>) -> ()
+async fn start_controller<T>(client: Client, ctx: Arc<Context>)
 where
     T: Resource
         + Clone

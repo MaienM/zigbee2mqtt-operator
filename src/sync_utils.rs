@@ -82,11 +82,11 @@ where
     T: Clone,
 {
     pub fn new(name: String) -> Self {
-        return Self {
+        Self {
             name,
             value: RwLock::new(None),
             notify: Notify::new(),
-        };
+        }
     }
 
     pub async fn set(&self, value: T) {
@@ -113,21 +113,19 @@ where
             }
         };
         match timeout(duration, future).await {
-            Ok(result) => return result,
-            Err(_) => {
-                return Err(Error::ActionFailed(
-                    format!(
-                        "value for {name} took too long to resolve",
-                        name = self.name
-                    ),
-                    None,
-                ))
-            }
+            Ok(result) => result,
+            Err(_) => Err(Error::ActionFailed(
+                format!(
+                    "value for {name} took too long to resolve",
+                    name = self.name
+                ),
+                None,
+            )),
         }
     }
 
     pub async fn get_immediate(&self) -> Option<Result<T, Error>> {
-        return self.value.read().await.clone();
+        self.value.read().await.clone()
     }
 }
 

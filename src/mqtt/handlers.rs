@@ -29,7 +29,7 @@ enum RequestResponse<T> {
     Error { error: String },
 }
 impl<T> RequestResponse<T> {
-    fn to_result(self) -> Result<T, Error> {
+    fn convert(self) -> Result<T, Error> {
         match self {
             RequestResponse::Ok { data } => Ok(data),
             RequestResponse::Error { error } => Err(Error::Zigbee2MQTTError(error)),
@@ -52,10 +52,10 @@ impl HealthChecker {
         let subscription = manager
             .subscribe_topic("bridge/response/health_check", 1)
             .await?;
-        return Ok(Self {
+        Ok(Self {
             manager,
             subscription,
-        });
+        })
     }
 
     pub async fn get(&mut self) -> Result<<HealthChecker as Handler>::Result, Error> {
@@ -71,7 +71,7 @@ impl HealthChecker {
             .stream_swap()
             .filter_lag()
             .parse_payload::<RequestResponse<HealthcheckPayload>>()
-            .map_ok(RequestResponse::to_result)
+            .map_ok(RequestResponse::convert)
             .next_noclose_timeout(TIMEOUT)
             .await?;
 
@@ -109,21 +109,20 @@ where
             .filter_lag()
             .parse_payload::<T>()
             .boxed();
-        return Ok(Self {
+        Ok(Self {
             subscription,
             value: None,
-        });
+        })
     }
 
     pub async fn get(&mut self) -> Result<T, Error>
     where
         T: Debug,
     {
-        match timeout(Duration::from_millis(1), self.subscription.next_noclose()).await {
-            Ok(result) => {
-                self.value = Some(result?);
-            }
-            Err(_) => {}
+        if let Ok(result) =
+            timeout(Duration::from_millis(1), self.subscription.next_noclose()).await
+        {
+            self.value = Some(result?);
         };
 
         match &self.value {
@@ -183,16 +182,16 @@ impl BridgeDevicesTracker {
                         None,
                     ))
                 } else if !device.supported {
-                    Err(Error::InvalidResource(format!(
-                        "device is not supported by Zigbee2MQTT"
-                    )))
+                    Err(Error::InvalidResource(
+                        "device is not supported by Zigbee2MQTT".to_string(),
+                    ))
                 } else {
                     Ok(device)
                 }
             }
-            None => Err(Error::InvalidResource(format!(
-                "device is not known to Zigbee2MQTT"
-            ))),
+            None => Err(Error::InvalidResource(
+                "device is not known to Zigbee2MQTT".to_string(),
+            )),
         }
     }
 }
@@ -248,7 +247,7 @@ impl Handler for DeviceRenamer {
 }
 impl DeviceRenamer {
     pub async fn new(manager: Arc<Manager>) -> Result<Self, Error> {
-        return Ok(Self { manager });
+        Ok(Self { manager })
     }
 
     pub async fn run(
@@ -283,7 +282,7 @@ impl DeviceRenamer {
                     error == &format!("friendly_name '{friendly_name}' is already in use")
                 }
             })
-            .map_ok(RequestResponse::to_result)
+            .map_ok(RequestResponse::convert)
             .next_noclose_timeout(TIMEOUT)
             .await?;
 
@@ -312,11 +311,11 @@ impl DeviceOptionsManager {
         tracker: Arc<Mutex<BridgeInfoTracker>>,
         ieee_address: String,
     ) -> Result<Self, Error> {
-        return Ok(Self {
+        Ok(Self {
             manager,
             tracker,
             ieee_address,
-        });
+        })
     }
 
     pub async fn get(&mut self) -> Result<<Self as Handler>::Result, Error> {
@@ -364,7 +363,7 @@ impl DeviceOptionsManager {
                     ieee_address = self.ieee_address
                 )),
             })
-            .map_ok(RequestResponse::to_result)
+            .map_ok(RequestResponse::convert)
             .next_noclose_timeout(TIMEOUT)
             .await?;
 
@@ -391,21 +390,17 @@ impl Handler for DeviceCapabilitiesManager {
 }
 impl DeviceCapabilitiesManager {
     pub async fn new(manager: Arc<Manager>, friendly_name: String) -> Result<Self, Error> {
-        return Ok(Self {
+        Ok(Self {
             log_subscription: manager.subscribe_topic("bridge/log", 16).await?,
             device_subscription: manager.subscribe_topic(&friendly_name, 1).await?,
             manager,
             friendly_name,
-        });
+        })
     }
 
-    async fn run<T: Into<Vec<u8>>>(
-        &mut self,
-        verb: &str,
-        message: T,
-    ) -> Result<<Self as Handler>::Result, Error>
+    async fn run<T>(&mut self, verb: &str, message: T) -> Result<<Self as Handler>::Result, Error>
     where
-        T: Clone + Debug,
+        T: Into<Vec<u8>> + Clone + Debug,
     {
         // Drop any existing messages, we're only interested in what happens after our request.
         self.log_subscription = self.log_subscription.resubscribe();

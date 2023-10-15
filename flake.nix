@@ -20,6 +20,7 @@
           buildInputs = [
             (devToolchain.withComponents [
               "cargo"
+              "clippy"
               "rust-src"
               "rustc"
             ])
