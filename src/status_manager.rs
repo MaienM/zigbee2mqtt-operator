@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use futures::Future;
 use k8s_openapi::NamespaceResourceScope;
 use kube::{
     api::{Patch, PatchParams},
@@ -6,13 +9,23 @@ use kube::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
+use tokio::spawn;
 use tracing::error_span;
 
 use crate::{ext::ResourceLocalExt, NAME};
 
 #[derive(Clone)]
-pub struct StatusManager<T: Resource + HasStatus> {
-    api: Api<T>,
+pub struct StatusManager<T>
+where
+    T: Resource<Scope = NamespaceResourceScope>
+        + CustomResourceExt
+        + HasStatus
+        + DeserializeOwned
+        + 'static,
+    <T as Resource>::DynamicType: Default,
+    <T as HasStatus>::Status: Default + Clone + Serialize + PartialEq,
+{
+    api: Arc<Api<T>>,
     id: String,
     name: String,
     old: Option<T::Status>,
@@ -26,7 +39,7 @@ where
 {
     pub fn new(client: Client, resource: &T) -> Self {
         return Self {
-            api: Api::namespaced(client, &resource.namespace().unwrap()),
+            api: Arc::new(Api::namespaced(client, &resource.namespace().unwrap())),
             id: resource.id(),
             name: resource.name_any(),
             old: resource.status().cloned(),
@@ -47,11 +60,10 @@ where
         self.set(status);
     }
 
-    pub async fn sync(&mut self) {
-        if Some(self.current.clone()) == self.old {
-            return;
-        }
-        self.old = Some(self.current.clone());
+    fn do_sync(&mut self) -> impl Future<Output = ()> {
+        let api = self.api.clone();
+        let id = self.id.clone();
+        let name = self.name.clone();
 
         let patch_params = PatchParams::apply(&NAME).force();
         let api_resource = T::api_resource();
@@ -61,12 +73,36 @@ where
             "status": self.current,
         }));
 
-        let result = self
-            .api
-            .patch_status(&self.name, &patch_params, &patch)
-            .await;
-        if let Err(err) = result {
-            error_span!("failed to update resource status", id = self.id, ?err);
+        async move {
+            let result = api.patch_status(&name, &patch_params, &patch).await;
+            if let Err(err) = result {
+                error_span!("failed to update resource status", id, ?err);
+            }
+        }
+    }
+
+    pub async fn sync(&mut self) {
+        if Some(self.current.clone()) == self.old {
+            return;
+        }
+        self.old = Some(self.current.clone());
+
+        self.do_sync().await;
+    }
+}
+impl<T> Drop for StatusManager<T>
+where
+    T: Resource<Scope = NamespaceResourceScope>
+        + CustomResourceExt
+        + HasStatus
+        + DeserializeOwned
+        + 'static,
+    <T as Resource>::DynamicType: Default,
+    <T as HasStatus>::Status: Default + Clone + Serialize + PartialEq,
+{
+    fn drop(&mut self) {
+        if Some(self.current.clone()) != self.old {
+            spawn(self.do_sync());
         }
     }
 }

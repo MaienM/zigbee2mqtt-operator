@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
+use futures::Future;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use rumqttc::{
     AsyncClient as MqttClient, ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event,
@@ -14,7 +15,13 @@ use tokio::{
 use tracing::{debug_span, error_span, info_span, trace_span, warn_span};
 use veil::Redact;
 
-use super::{handlers::HealthChecker, subscription::TopicSubscription};
+use super::{
+    handlers::{
+        BridgeDevice, BridgeDevicesTracker, BridgeInfoTracker, DeviceCapabilitiesManager,
+        DeviceOptionsManager, DeviceRenamer, Handler, HealthChecker,
+    },
+    subscription::TopicSubscription,
+};
 use crate::{
     background_task,
     event_manager::{EventCore, EventType},
@@ -234,6 +241,24 @@ async fn client_disconnect_or_warn(client: &MqttClient, id: &String) {
     };
 }
 
+struct OnceCellMutex<T>(OnceCell<Result<Arc<Mutex<T>>, Error>>);
+impl<T> OnceCellMutex<T> {
+    fn new() -> Self {
+        Self(OnceCell::new())
+    }
+
+    pub async fn get_or_init<F, Fut>(&self, f: F) -> Result<Arc<Mutex<T>>, Error>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<T, Error>>,
+    {
+        self.0
+            .get_or_init(|| async { Ok(Arc::new(Mutex::new(f().await?))) })
+            .await
+            .clone()
+    }
+}
+
 const STATUS_DEBOUNCE: Duration = Duration::from_secs(10);
 pub struct Manager {
     id: String,
@@ -246,6 +271,8 @@ pub struct Manager {
     status_sender: Mutex<mpsc::UnboundedSender<Status>>,
     subscriptions: Mutex<HashMap<String, Arc<Mutex<broadcast::Sender<Publish>>>>>,
     subscription_lock: LockableNotify,
+    bridge_info_tracker: OnceCellMutex<BridgeInfoTracker>,
+    bridge_devices_tracker: OnceCellMutex<BridgeDevicesTracker>,
 }
 impl Manager {
     pub async fn new(
@@ -339,6 +366,8 @@ impl Manager {
             status_sender: Mutex::new(status_sender),
             subscriptions: Mutex::new(HashMap::new()),
             subscription_lock: LockableNotify::new(),
+            bridge_info_tracker: OnceCellMutex::new(),
+            bridge_devices_tracker: OnceCellMutex::new(),
         });
 
         // Start background tasks.
@@ -679,5 +708,47 @@ impl Manager {
                     Some(Arc::new(Box::new(err))),
                 )
             })
+    }
+
+    pub async fn get_bridge_device_definition(
+        self: &Arc<Self>,
+        ieee_address: &str,
+    ) -> Result<BridgeDevice, Error> {
+        self.bridge_devices_tracker
+            .get_or_init(|| BridgeDevicesTracker::new(self.clone()))
+            .await?
+            .lock()
+            .await
+            .get_device(ieee_address)
+            .await
+    }
+
+    pub async fn rename_device(
+        self: &Arc<Self>,
+        ieee_address: &str,
+        friendly_name: &str,
+    ) -> Result<<DeviceRenamer as Handler>::Result, Error> {
+        DeviceRenamer::new(self.clone())
+            .await?
+            .run(ieee_address, friendly_name)
+            .await
+    }
+
+    pub async fn get_device_options_manager(
+        self: &Arc<Self>,
+        ieee_address: String,
+    ) -> Result<DeviceOptionsManager, Error> {
+        let tracker = self
+            .bridge_info_tracker
+            .get_or_init(|| BridgeInfoTracker::new(self.clone()))
+            .await?;
+        DeviceOptionsManager::new(self.clone(), tracker, ieee_address).await
+    }
+
+    pub async fn get_device_capabilities_manager(
+        self: &Arc<Self>,
+        friendly_name: String,
+    ) -> Result<DeviceCapabilitiesManager, Error> {
+        DeviceCapabilitiesManager::new(self.clone(), friendly_name).await
     }
 }

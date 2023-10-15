@@ -1,9 +1,10 @@
-use std::{str::from_utf8, sync::Arc};
+use std::{collections::HashMap, str::from_utf8, sync::Arc};
 
 use k8s_openapi::api::core::v1::Secret;
 use kube::{Api, Client, CustomResource, Resource, ResourceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use crate::{ext::ResourceLocalExt, Error};
 
@@ -111,4 +112,41 @@ fn default_instance_port() -> u16 {
 }
 fn default_instance_base_topic() -> String {
     "zigbee2mqtt".to_string()
+}
+
+///
+/// A zigbee2mqtt device.
+///
+#[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[kube(
+    group = "zigbee2mqtt.maienm.com",
+    version = "v1",
+    kind = "Device",
+    plural = "devices",
+    namespaced,
+    status = "DeviceStatus"
+)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSpec {
+    /// The instance this device belongs to. Defaults to 'default'.
+    #[serde(default = "default_device_instance")]
+    pub instance: String,
+    /// The device address.
+    pub ieee_address: String,
+    /// Friendly name.
+    pub friendly_name: Option<String>,
+    /// Options to set.
+    pub options: Option<HashMap<String, JsonValue>>,
+    /// Capabilities to set.
+    pub capabilities: Option<HashMap<String, JsonValue>>,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
+pub struct DeviceStatus {
+    /// Whether the device is present.
+    pub exists: Option<bool>,
+    /// Whether the device is in the desired state.
+    pub synced: Option<bool>,
+}
+fn default_device_instance() -> String {
+    "default".to_string()
 }

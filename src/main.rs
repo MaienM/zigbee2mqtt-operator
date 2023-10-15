@@ -17,9 +17,12 @@ use kube::{
     Api, Client, CustomResourceExt, Resource, ResourceExt,
 };
 use serde::{de::DeserializeOwned, Serialize};
+use tokio::join;
 use tracing::{error_span, info_span};
 use zigbee2mqtt_operator::{
-    crds::Instance, ext::ResourceLocalExt, Context, Error, Reconciler, State,
+    crds::{Device, Instance},
+    ext::ResourceLocalExt,
+    Context, Error, Reconciler, State,
 };
 
 pub static FINALIZER: &str = "zigbee2mqtt.maienm.com";
@@ -45,12 +48,10 @@ where
         match event {
             Finalizer::Apply(doc) => {
                 let result = doc.reconcile(ctx.clone()).await;
-
                 result.map_err(|err| err.0)
             }
             Finalizer::Cleanup(doc) => {
                 let result = doc.cleanup(ctx.clone()).await;
-
                 result.map_err(|err| err.0)
             }
         }
@@ -115,5 +116,8 @@ async fn main() {
         state: Arc::new(State::default()),
     });
 
-    start_controller::<Instance>(client.clone(), ctx.clone()).await;
+    join!(
+        start_controller::<Instance>(client.clone(), ctx.clone()),
+        start_controller::<Device>(client.clone(), ctx.clone()),
+    );
 }

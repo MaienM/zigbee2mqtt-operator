@@ -13,6 +13,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 pub mod crds;
+mod device;
 pub mod event_manager;
 pub mod ext;
 mod instance;
@@ -95,6 +96,9 @@ pub trait EmittableResult<V> {
     async fn emit_event_map<F>(self, manager: &EventManager, f: F) -> Result<V, EmittedError>
     where
         F: FnOnce(&mut EventCore) -> () + Send;
+
+    /// Mark error as published without actually publishing anything. This should only be used in cases where one or more events have already been published for the error manually.
+    fn fake_emit_event(self) -> Result<V, EmittedError>;
 }
 #[async_trait]
 impl<V> EmittableResult<V> for Result<V, Error>
@@ -131,6 +135,10 @@ where
             f(&mut event);
             manager.publish_nolog(event).await;
         }
+        self.map_err(EmittedError)
+    }
+
+    fn fake_emit_event(self) -> Result<V, EmittedError> {
         self.map_err(EmittedError)
     }
 }
