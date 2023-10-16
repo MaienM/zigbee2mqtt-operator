@@ -121,7 +121,7 @@ impl EventManager {
 
     pub async fn publish(&self, core: EventCore) {
         info_span!("registering event", id=?self.id, ?core);
-        self.publish_nolog(core).await
+        self.publish_nolog(core).await;
     }
 
     pub async fn publish_nolog(&self, core: EventCore) {

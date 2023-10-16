@@ -230,9 +230,11 @@ impl Options {
 
 async fn client_disconnect_or_warn(client: &MqttClient, id: &String) {
     match client.disconnect().await {
-        Ok(_) => {}
-        Err(ClientError::Request(Request::Disconnect(_))) => {}
-        Err(ClientError::TryRequest(Request::Disconnect(_))) => {}
+        Ok(_)
+        | Err(
+            ClientError::Request(Request::Disconnect(_))
+            | ClientError::TryRequest(Request::Disconnect(_)),
+        ) => {}
         Err(err) => {
             warn_span!("failed to disconnect cleanly", id, ?err);
         }
@@ -619,58 +621,57 @@ impl Manager {
     ) -> Result<TopicSubscription, Error> {
         let topic = format!("{}/{}", self.options.lock().await.base_topic, topic);
         let mut subscriptions_l = self.subscriptions.lock().await;
-        let subscription = match subscriptions_l.get(&topic) {
-            Some(sender) => sender.lock().await.subscribe(),
-            None => {
-                let (sender, receiver) = broadcast::channel(queue_size);
-                let sender = Arc::new(Mutex::new(sender));
-                subscriptions_l.insert(topic.to_string(), sender.clone());
-                drop(subscriptions_l);
+        let subscription = if let Some(sender) = subscriptions_l.get(&topic) {
+            sender.lock().await.subscribe()
+        } else {
+            let (sender, receiver) = broadcast::channel(queue_size);
+            let sender = Arc::new(Mutex::new(sender));
+            subscriptions_l.insert(topic.to_string(), sender.clone());
+            drop(subscriptions_l);
 
-                spawn({
-                    let this = self.clone();
-                    let topic = topic.to_string();
-                    async move {
-                        let mut raw_receiver = this.event_sender.lock().await.subscribe();
-                        while let Ok(event) = raw_receiver.recv().await {
-                            match event {
-                                Event::Incoming(Packet::Publish(msg)) => {
-                                    if topic_match(&topic, &msg.topic) {
-                                        match sender.lock().await.send(msg) {
-                                            Ok(_) => {}
-                                            Err(_) => break, // No more listeners, cleanup transform + subscription.
-                                        }
+            spawn({
+                let this = self.clone();
+                let topic = topic.to_string();
+                async move {
+                    let mut raw_receiver = this.event_sender.lock().await.subscribe();
+                    while let Ok(event) = raw_receiver.recv().await {
+                        match event {
+                            Event::Incoming(Packet::Publish(msg)) => {
+                                if topic_match(&topic, &msg.topic) {
+                                    match sender.lock().await.send(msg) {
+                                        Ok(_) => {}
+                                        Err(_) => break, // No more listeners, cleanup transform + subscription.
                                     }
                                 }
-                                Event::Incoming(Packet::PingReq) => {
-                                    // Check if this topic + transform are still needed. This is mostly useful for topics that receive little traffic as these might not attempt a send for a while.
-                                    if sender.lock().await.receiver_count() == 0 {
-                                        break;
-                                    }
-                                }
-                                _ => {}
                             }
+                            Event::Incoming(Packet::PingReq) => {
+                                // Check if this topic + transform are still needed. This is mostly useful for topics that receive little traffic as these might not attempt a send for a while.
+                                if sender.lock().await.receiver_count() == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
                         }
-
-                        let mut subscriptions = this.subscriptions.lock().await;
-                        let client = this.client.lock().await;
-                        let notify = this.subscription_lock.lock().await;
-                        debug_span!("unsubscribing", id = this.id, topic);
-                        if let Err(err) = client.unsubscribe(topic.clone()).await {
-                            let _ = this
-                                .start_shutdown(Some(Box::new(Error::MQTTError(
-                                    format!("unsubscribe from {topic} failed"),
-                                    Some(Arc::new(Box::new(err))),
-                                ))))
-                                .await;
-                        }
-                        notify.notified().await;
-                        subscriptions.remove(&topic);
                     }
-                });
 
-                receiver
-            }
+                    let mut subscriptions = this.subscriptions.lock().await;
+                    let client = this.client.lock().await;
+                    let notify = this.subscription_lock.lock().await;
+                    debug_span!("unsubscribing", id = this.id, topic);
+                    if let Err(err) = client.unsubscribe(topic.clone()).await {
+                        let _ = this
+                            .start_shutdown(Some(Box::new(Error::MQTTError(
+                                format!("unsubscribe from {topic} failed"),
+                                Some(Arc::new(Box::new(err))),
+                            ))))
+                            .await;
+                    }
+                    notify.notified().await;
+                    subscriptions.remove(&topic);
+                }
+            });
+
+            receiver
         };
 
         // Always send a subscription event to the server regardless of whether there already was an active subscription as this will trigger a re-send of retained messages.
@@ -731,7 +732,6 @@ impl Manager {
         friendly_name: &str,
     ) -> Result<<DeviceRenamer as Handler>::Result, Error> {
         DeviceRenamer::new(self.clone())
-            .await?
             .run(ieee_address, friendly_name)
             .await
     }
@@ -744,7 +744,11 @@ impl Manager {
             .bridge_info_tracker
             .get_or_init(|| BridgeInfoTracker::new(self.clone()))
             .await?;
-        DeviceOptionsManager::new(self.clone(), tracker, ieee_address).await
+        Ok(DeviceOptionsManager::new(
+            self.clone(),
+            tracker,
+            ieee_address,
+        ))
     }
 
     pub async fn get_device_capabilities_manager(

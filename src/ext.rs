@@ -1,11 +1,12 @@
 use kube::{Resource, ResourceExt};
 
+#[allow(clippy::module_name_repetitions)]
 pub trait ResourceLocalExt {
-    /// Get a description of the type of the resource in the form {api_version}/{kind}.
+    /// Get a description of the type of the resource in the form `{api_version}/{kind}`.
     fn kind_with_version() -> String;
     /// Get the name including the namespace for this resource.
     fn full_name(&self) -> String;
-    /// Get a string that uniquely represent this resouce in the form of {kind_with_version}{full_name}.
+    /// Get a string that uniquely represent this resouce in the form of `{kind_with_version}/{full_name}`.
     fn id(&self) -> String;
 }
 impl<T> ResourceLocalExt for T

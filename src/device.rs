@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use crate::{
     crds::Device,
     event_manager::{EventCore, EventManager, EventType},
+    mqtt::Manager,
     status_manager::StatusManager,
     Context, EmittableResult, EmittedError, Error, Reconciler, TIMEOUT,
 };
@@ -67,7 +68,7 @@ where
     F: Future<Output = Result<HashMap<String, Value>, Error>>,
 {
     let differences = find_differences(wanted, actual);
-    for difference in differences.iter() {
+    for difference in &differences {
         eventmanager
             .publish(EventCore {
                 action: "Reconciling".to_string(),
@@ -92,7 +93,7 @@ where
         .emit_event_with_path(eventmanager, field_path)
         .await?;
     let differences = find_differences(wanted, &result);
-    for difference in differences.iter() {
+    for difference in &differences {
         let Difference {
             key,
             wanted,
@@ -106,7 +107,7 @@ where
                 )),
                 reason: "Created".to_string(),
                 type_: EventType::Warning,
-                field_path: Some(format!("{}.{}", field_path, key)),
+                field_path: Some(format!("{field_path}.{key}")),
             })
             .await;
     }
@@ -142,24 +143,44 @@ impl Reconciler for Device {
             s.exists = Some(false);
         });
 
-        let ieee_address = &self.spec.ieee_address;
-        let wanted_friendly_name = self
-            .spec
-            .friendly_name
-            .clone()
-            .unwrap_or_else(|| ieee_address.clone());
-
-        let info = manager
-            .get_bridge_device_definition(ieee_address)
-            .await
-            .emit_event_with_path(&eventmanager, "spec.ieee_address")
-            .await?;
+        let wanted_friendly_name = self.sync_name(&manager, &mut eventmanager).await?;
 
         statusmanager.update(|s| {
             s.exists = Some(true);
             s.synced = Some(false);
         });
 
+        self.sync_options(&manager, &mut eventmanager).await?;
+        self.sync_capabilities(wanted_friendly_name, &manager, &mut eventmanager)
+            .await?;
+
+        statusmanager.update(|s| {
+            s.synced = Some(true);
+        });
+
+        return Ok(Action::requeue(Duration::from_secs(1)));
+    }
+
+    async fn cleanup(&self, _ctx: Arc<Context>) -> Result<Action, EmittedError> {
+        return Ok(Action::requeue(Duration::from_secs(5 * 60)));
+    }
+}
+impl Device {
+    async fn sync_name(
+        &self,
+        manager: &Arc<Manager>,
+        eventmanager: &mut EventManager,
+    ) -> Result<String, EmittedError> {
+        let wanted_friendly_name = self
+            .spec
+            .friendly_name
+            .clone()
+            .unwrap_or_else(|| self.spec.ieee_address.clone());
+        let info = manager
+            .get_bridge_device_definition(&self.spec.ieee_address)
+            .await
+            .emit_event_with_path(eventmanager, "spec.ieee_address")
+            .await?;
         if info.friendly_name != wanted_friendly_name {
             eventmanager
                     .publish(EventCore {
@@ -174,22 +195,29 @@ impl Reconciler for Device {
                     })
                     .await;
             manager
-                .rename_device(ieee_address, &wanted_friendly_name)
+                .rename_device(&self.spec.ieee_address, &wanted_friendly_name)
                 .await
-                .emit_event_with_path(&eventmanager, "spec.friendly_name")
+                .emit_event_with_path(eventmanager, "spec.friendly_name")
                 .await?;
         }
+        Ok(wanted_friendly_name)
+    }
 
+    async fn sync_options(
+        &self,
+        manager: &Arc<Manager>,
+        eventmanager: &mut EventManager,
+    ) -> Result<(), EmittedError> {
         if let Some(ref wanted_options) = self.spec.options {
             let mut options_manager = manager
-                .get_device_options_manager(ieee_address.clone())
+                .get_device_options_manager(self.spec.ieee_address.clone())
                 .await
-                .emit_event_with_path(&eventmanager, "spec.ieee_address")
+                .emit_event_with_path(eventmanager, "spec.ieee_address")
                 .await?;
             let current_options = options_manager
                 .get()
                 .await
-                .emit_event_with_path(&eventmanager, "spec.ieee_address")
+                .emit_event_with_path(eventmanager, "spec.ieee_address")
                 .await?;
 
             // Set all options that are currently set but which are not present in the spec to null as this will restore them to their default values.
@@ -203,7 +231,7 @@ impl Reconciler for Device {
 
             let options_manager = Arc::new(Mutex::new(options_manager));
             do_sync(
-                &mut eventmanager,
+                eventmanager,
                 "option",
                 "spec.options",
                 &wanted_options,
@@ -219,22 +247,30 @@ impl Reconciler for Device {
             )
             .await?;
         }
+        Ok(())
+    }
 
+    async fn sync_capabilities(
+        &self,
+        friendly_name: String,
+        manager: &Arc<Manager>,
+        eventmanager: &mut EventManager,
+    ) -> Result<(), EmittedError> {
         if let Some(ref wanted_capabilities) = self.spec.capabilities {
             let mut capabilities_manager = manager
-                .get_device_capabilities_manager(wanted_friendly_name)
+                .get_device_capabilities_manager(friendly_name)
                 .await
-                .emit_event_with_path(&eventmanager, "spec.friendly_name")
+                .emit_event_with_path(eventmanager, "spec.friendly_name")
                 .await?;
             let current_capabilities = capabilities_manager
                 .get()
                 .await
-                .emit_event_with_path(&eventmanager, "spec.friendly_name")
+                .emit_event_with_path(eventmanager, "spec.friendly_name")
                 .await?;
 
             let capabilities_manager = Arc::new(Mutex::new(capabilities_manager));
             do_sync(
-                &mut eventmanager,
+                eventmanager,
                 "capability",
                 "spec.capabilities",
                 wanted_capabilities,
@@ -252,15 +288,6 @@ impl Reconciler for Device {
             )
             .await?;
         }
-
-        statusmanager.update(|s| {
-            s.synced = Some(true);
-        });
-
-        return Ok(Action::requeue(Duration::from_secs(1)));
-    }
-
-    async fn cleanup(&self, _ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        return Ok(Action::requeue(Duration::from_secs(5 * 60)));
+        Ok(())
     }
 }

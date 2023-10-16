@@ -14,6 +14,7 @@ use crate::Error;
 
 /// A subscription to an MQTT topic.
 #[derive(Deref, DerefMut)]
+#[allow(clippy::module_name_repetitions)]
 pub struct TopicSubscription {
     #[deref]
     #[deref_mut]
@@ -25,7 +26,7 @@ impl TopicSubscription {
         Self { receiver, topic }
     }
 
-    /// Create a copy of this subscription. This copy will not get any of the currently pending messages, it will only get messages that are received after its creation.
+    /// Create a copy of this subscription with a new receiver created with [`broadcast::Receiver::resubscribe`].
     pub fn resubscribe(&self) -> Self {
         Self {
             receiver: self.receiver.resubscribe(),
@@ -33,7 +34,7 @@ impl TopicSubscription {
         }
     }
 
-    /// Create a TopicStream from this subscription, consuming it in the process.
+    /// Create a [`TopicStream`] from this subscription, consuming it in the process.
     pub fn stream(self) -> TopicStream<BroadcastStream<Publish>> {
         TopicStream {
             stream: BroadcastStream::new(self.receiver),
@@ -41,7 +42,7 @@ impl TopicSubscription {
         }
     }
 
-    /// Create a TopicStream from this subscription, leaving a new copy in its place (as would be returned from resubscribe).
+    /// Create a [`TopicStream`] from this subscription, leaving a new copy in its place (as would be returned from resubscribe).
     pub fn stream_swap(&mut self) -> TopicStream<BroadcastStream<Publish>> {
         let mut receiver = self.receiver.resubscribe();
         mem::swap(&mut receiver, &mut self.receiver);
@@ -203,7 +204,7 @@ where
         }
     }
 
-    /// As next_noclose(), but returns an error if no item is read within the given timeout.
+    /// As [`Self::next_noclose`], but returns an error if no item is read within the given timeout.
     pub async fn next_noclose_timeout(&mut self, duration: Duration) -> St::Item {
         match timeout(duration, self.next_noclose()).await {
             Ok(value) => value,
@@ -218,7 +219,7 @@ where
     /// Keep reading the next item from the stream until:
     /// - the result is an error (which will be returned immediately).
     /// - getting the next item takes longer than the provided timeout (at which point the last item will be returned, or an error if no items were received within the timeout).
-    /// - the steam closes (which will result in an error, as next_noclose).
+    /// - the steam closes (which will result in an error, as [`Self::next_noclose`]).
     pub async fn last(&mut self, timeout_first: Duration, timeout_interval: Duration) -> St::Item {
         let mut result = Ok(self.next_noclose_timeout(timeout_first).await?);
         while let Ok(item) = timeout(timeout_interval, self.next_noclose()).await {

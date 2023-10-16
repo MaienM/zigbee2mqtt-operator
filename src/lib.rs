@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 use std::{env, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;

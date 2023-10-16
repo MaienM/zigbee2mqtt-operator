@@ -246,8 +246,8 @@ impl Handler for DeviceRenamer {
     type Result = ();
 }
 impl DeviceRenamer {
-    pub async fn new(manager: Arc<Manager>) -> Result<Self, Error> {
-        Ok(Self { manager })
+    pub fn new(manager: Arc<Manager>) -> Self {
+        Self { manager }
     }
 
     pub async fn run(
@@ -306,16 +306,16 @@ impl Handler for DeviceOptionsManager {
     type Result = HashMap<String, Value>;
 }
 impl DeviceOptionsManager {
-    pub async fn new(
+    pub fn new(
         manager: Arc<Manager>,
         tracker: Arc<Mutex<BridgeInfoTracker>>,
         ieee_address: String,
-    ) -> Result<Self, Error> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             manager,
             tracker,
             ieee_address,
-        })
+        }
     }
 
     pub async fn get(&mut self) -> Result<<Self as Handler>::Result, Error> {
