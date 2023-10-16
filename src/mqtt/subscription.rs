@@ -10,7 +10,7 @@ use tokio_stream::{
     StreamExt,
 };
 
-use crate::Error;
+use crate::error::Error;
 
 /// A subscription to an MQTT topic.
 #[derive(Deref, DerefMut)]

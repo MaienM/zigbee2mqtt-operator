@@ -1,3 +1,5 @@
+//! Utility to manage Kubernetes [`Event`]s.
+
 use fasthash::metro;
 use k8s_openapi::{
     api::{
@@ -14,7 +16,7 @@ use serde_json::json;
 use strum_macros::Display;
 use tracing::{error_span, info_span};
 
-use crate::{ext::ResourceLocalExt, NAME};
+use crate::{ResourceLocalExt, NAME};
 
 pub trait EventExt {
     fn create(regarding: ObjectReference, core: EventCore) -> Self;

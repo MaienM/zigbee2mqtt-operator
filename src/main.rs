@@ -21,8 +21,8 @@ use tokio::join;
 use tracing::{error_span, info_span};
 use zigbee2mqtt_operator::{
     crds::{Device, Instance},
-    ext::ResourceLocalExt,
-    Context, Error, Reconciler, State,
+    error::Error,
+    Context, Reconciler, ResourceLocalExt, State,
 };
 
 pub static FINALIZER: &str = "zigbee2mqtt.maienm.com";

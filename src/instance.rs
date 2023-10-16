@@ -1,3 +1,5 @@
+//! Reconcile logic for [`Instance`].
+
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
@@ -8,11 +10,11 @@ use tracing::{error_span, info_span};
 use crate::{
     background_task,
     crds::Instance,
+    error::{EmittableResult, Error},
     event_manager::EventManager,
-    ext::ResourceLocalExt,
     mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
     status_manager::StatusManager,
-    Context, EmittableResult, EmittedError, Error, Reconciler,
+    Context, EmittedError, Reconciler, ResourceLocalExt,
 };
 
 #[async_trait]
@@ -130,7 +132,7 @@ impl Instance {
         eventmanager: &EventManager,
     ) -> Result<Options, EmittedError> {
         let mut options = Options {
-            id: self.full_name(),
+            client_id: self.full_name(),
             host: self.spec.host.clone(),
             port: self.spec.port,
             credentials: None,

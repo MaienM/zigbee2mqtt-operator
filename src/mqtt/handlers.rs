@@ -15,7 +15,7 @@ use super::{
     manager::Manager,
     subscription::{TopicStream, TopicSubscription},
 };
-use crate::{Error, TIMEOUT};
+use crate::{error::Error, TIMEOUT};
 
 pub trait Handler: Sized {
     type Result;

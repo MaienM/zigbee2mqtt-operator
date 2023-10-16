@@ -24,9 +24,10 @@ use super::{
 };
 use crate::{
     background_task,
+    error::Error,
     event_manager::{EventCore, EventType},
     sync_utils::LockableNotify,
-    Error, TIMEOUT,
+    TIMEOUT,
 };
 
 /// Check whether a topic matches a pattern following the MQTT wildcard rules.
@@ -201,7 +202,7 @@ impl From<&Status> for EventCore {
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Options {
-    pub id: String,
+    pub client_id: String,
     pub host: String,
     pub port: u16,
     pub credentials: Option<Credentials>,
@@ -215,7 +216,7 @@ pub struct Credentials {
 }
 impl Options {
     pub(self) fn to_rumqtt(&self) -> MqttOptions {
-        let mut options = MqttOptions::new(self.id.clone(), self.host.clone(), self.port);
+        let mut options = MqttOptions::new(self.client_id.clone(), self.host.clone(), self.port);
         if let Some(cred) = &self.credentials {
             options.set_credentials(cred.username.clone(), cred.password.clone());
         }
@@ -285,7 +286,7 @@ impl Manager {
 
         let id = format!(
             "{id}#{random}",
-            id = options.id,
+            id = options.client_id,
             random = thread_rng()
                 .sample_iter(&Alphanumeric)
                 .take(8)
@@ -556,7 +557,7 @@ impl Manager {
             };
         }
         let changes: Vec<&str> = [
-            key_if_changed!(id),
+            key_if_changed!(client_id),
             key_if_changed!(host),
             key_if_changed!(port),
             key_if_changed!(base_topic),

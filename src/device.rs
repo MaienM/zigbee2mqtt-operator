@@ -1,3 +1,5 @@
+//! Reconcile logic for [`Device`].
+
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
@@ -8,10 +10,11 @@ use tokio::sync::Mutex;
 
 use crate::{
     crds::Device,
+    error::{EmittableResult, Error},
     event_manager::{EventCore, EventManager, EventType},
     mqtt::Manager,
     status_manager::StatusManager,
-    Context, EmittableResult, EmittedError, Error, Reconciler, TIMEOUT,
+    Context, EmittedError, Reconciler, TIMEOUT,
 };
 
 struct Difference {

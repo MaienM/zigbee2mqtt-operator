@@ -1,3 +1,5 @@
+//! Utility to manage the status of Kubernetes resources.
+
 use std::sync::Arc;
 
 use futures::Future;
@@ -12,7 +14,7 @@ use serde_json::json;
 use tokio::spawn;
 use tracing::error_span;
 
-use crate::{ext::ResourceLocalExt, NAME};
+use crate::{ResourceLocalExt, NAME};
 
 #[derive(Clone)]
 pub struct StatusManager<T>

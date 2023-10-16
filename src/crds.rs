@@ -1,3 +1,5 @@
+//! Definitions of the resources managed by this operator.
+
 use std::{collections::HashMap, str::from_utf8, sync::Arc};
 
 use k8s_openapi::{api::core::v1::Secret, NamespaceResourceScope};
@@ -6,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::{ext::ResourceLocalExt, Error};
+use crate::{error::Error, ResourceLocalExt};
 
 ///
 /// A zigbee2mqtt instance.
@@ -33,6 +35,7 @@ pub struct InstanceSpec {
     pub base_topic: String,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[allow(missing_docs)]
 pub struct InstanceSpecCredentials {
     /// The username to authenticate with.
     pub username: Value,
@@ -40,6 +43,7 @@ pub struct InstanceSpecCredentials {
     pub password: Value,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
+#[allow(missing_docs)]
 pub struct InstanceStatus {
     /// Whether there is an active connection with the MQTT broker.
     pub broker: bool,
@@ -74,11 +78,15 @@ pub struct DeviceSpec {
     pub ieee_address: String,
     /// Friendly name.
     pub friendly_name: Option<String>,
-    /// Options to set. This is a combination of the common settings and the device specific settings, except for `friendly_name`.
+    /// The authorative options for the device.
+    ///
+    /// This is a combination of the common settings and the device specific settings, without `friendly_name`.
     ///
     /// The common settings can be found in the 'Settings' tab in the UI, with more details in the [common device options](https://www.zigbee2mqtt.io/guide/configuration/devices-groups.html#common-device-options) section in the documentation.
     ///
     /// The device specific settings can be found in the 'Settings (specific)' tab in the UI, with more details in the [supported devices listings](https://www.zigbee2mqtt.io/supported-devices/).
+    ///
+    /// Note that unset/null and `{}` are different; the former will not manage options for this device at all while the latter will set all options to their default values.
     pub options: Option<HashMap<String, JsonValue>>,
     /// Capabilities to set.
     ///
@@ -86,6 +94,7 @@ pub struct DeviceSpec {
     pub capabilities: Option<HashMap<String, JsonValue>>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
+#[allow(missing_docs)]
 pub struct DeviceStatus {
     /// Whether the device is present.
     pub exists: Option<bool>,
@@ -100,6 +109,7 @@ fn default_device_instance() -> String {
 /// A value that can be indirect, like environment variables.
 ///
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[allow(missing_docs)]
 pub enum Value {
     #[serde(rename = "value")]
     Inline(String),
@@ -107,6 +117,7 @@ pub enum Value {
     Secret { secret_key_ref: SecretKeyRef },
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[allow(missing_docs)]
 pub struct SecretKeyRef {
     namespace: Option<String>,
     name: String,

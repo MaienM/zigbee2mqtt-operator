@@ -1,3 +1,5 @@
+//! Synchronization utilities for use in asynchronous contexts.
+
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use tokio::{
@@ -6,7 +8,7 @@ use tokio::{
     time::timeout,
 };
 
-use crate::Error;
+use crate::error::Error;
 
 /// An wrapper for [`HashMap<String, T>`] which allows one to wait for a key to become available.
 pub struct AwaitableMap<T> {
