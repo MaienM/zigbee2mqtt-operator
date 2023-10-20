@@ -1,11 +1,11 @@
 //! Reconcile logic for [`Device`].
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::Future;
 use kube::{runtime::controller::Action, ResourceExt};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -22,10 +22,7 @@ struct Difference {
     wanted: String,
     actual: String,
 }
-fn find_differences(
-    wanted: &HashMap<String, Value>,
-    actual: &HashMap<String, Value>,
-) -> Vec<Difference> {
+fn find_differences(wanted: &Map<String, Value>, actual: &Map<String, Value>) -> Vec<Difference> {
     let mut differences = Vec::new();
     for key in wanted.keys() {
         let (wanted, actual) = match (wanted.get(key), actual.get(key)) {
@@ -63,12 +60,12 @@ async fn do_sync<F>(
     eventmanager: &mut EventManager,
     name: &str,
     field_path: &str,
-    wanted: &HashMap<String, Value>,
-    actual: &HashMap<String, Value>,
+    wanted: &Map<String, Value>,
+    actual: &Map<String, Value>,
     mut apply: impl FnMut() -> F,
 ) -> Result<(), EmittedError>
 where
-    F: Future<Output = Result<HashMap<String, Value>, Error>>,
+    F: Future<Output = Result<Map<String, Value>, Error>>,
 {
     let differences = find_differences(wanted, actual);
     for difference in &differences {
@@ -115,9 +112,10 @@ where
             .await;
     }
     if !differences.is_empty() {
-        return Err(Error::InvalidResource(format!(
-            "failed to set at least one {name}"
-        )))
+        return Err(Error::InvalidResource {
+            field_path: String::new(),
+            message: format!("failed to set at least one {name}"),
+        })
         .fake_emit_event();
     }
     Ok(())
@@ -211,45 +209,44 @@ impl Device {
         manager: &Arc<Manager>,
         eventmanager: &mut EventManager,
     ) -> Result<(), EmittedError> {
-        if let Some(ref wanted_options) = self.spec.options {
-            let mut options_manager = manager
-                .get_device_options_manager(self.spec.ieee_address.clone())
-                .await
-                .emit_event_with_path(eventmanager, "spec.ieee_address")
-                .await?;
-            let current_options = options_manager
-                .get()
-                .await
-                .emit_event_with_path(eventmanager, "spec.ieee_address")
-                .await?;
+        let Some(ref wanted_options) = self.spec.options else {
+            return Ok(());
+        };
 
-            // Set all options that are currently set but which are not present in the spec to null as this will restore them to their default values.
-            let mut wanted_options = wanted_options.clone();
-            for key in current_options.keys() {
-                if key == "friendly_name" {
-                    continue;
-                }
-                wanted_options.entry(key.clone()).or_insert(Value::Null);
-            }
-
-            let options_manager = Arc::new(Mutex::new(options_manager));
-            do_sync(
-                eventmanager,
-                "option",
-                "spec.options",
-                &wanted_options,
-                &current_options,
-                || {
-                    let options_manager = options_manager.clone();
-                    let wanted_options = wanted_options.clone();
-                    async move {
-                        let mut options_manager = options_manager.lock().await;
-                        options_manager.set(&wanted_options).await
-                    }
-                },
-            )
+        let mut options_manager =
+            manager.get_device_options_manager(self.spec.ieee_address.clone());
+        let current_options = options_manager
+            .get()
+            .await
+            .emit_event_with_path(eventmanager, "spec.ieee_address")
             .await?;
+
+        // Set all options that are currently set but which are not present in the spec to null as this will restore them to their default values.
+        let mut wanted_options = wanted_options.clone();
+        for key in current_options.keys() {
+            if key == "friendly_name" {
+                continue;
+            }
+            wanted_options.entry(key.clone()).or_insert(Value::Null);
         }
+
+        let options_manager = Arc::new(Mutex::new(options_manager));
+        do_sync(
+            eventmanager,
+            "option",
+            "spec.options",
+            &wanted_options,
+            &current_options,
+            || {
+                let options_manager = options_manager.clone();
+                let wanted_options = wanted_options.clone();
+                async move {
+                    let mut options_manager = options_manager.lock().await;
+                    options_manager.set(&wanted_options).await
+                }
+            },
+        )
+        .await?;
         Ok(())
     }
 
@@ -259,38 +256,38 @@ impl Device {
         manager: &Arc<Manager>,
         eventmanager: &mut EventManager,
     ) -> Result<(), EmittedError> {
-        if let Some(ref wanted_capabilities) = self.spec.capabilities {
-            let mut capabilities_manager = manager
-                .get_device_capabilities_manager(friendly_name)
-                .await
-                .emit_event_with_path(eventmanager, "spec.friendly_name")
-                .await?;
-            let current_capabilities = capabilities_manager
-                .get()
-                .await
-                .emit_event_with_path(eventmanager, "spec.friendly_name")
-                .await?;
+        let Some(ref wanted_capabilities) = self.spec.capabilities else {
+            return Ok(());
+        };
 
-            let capabilities_manager = Arc::new(Mutex::new(capabilities_manager));
-            do_sync(
-                eventmanager,
-                "capability",
-                "spec.capabilities",
-                wanted_capabilities,
-                &current_capabilities,
-                || {
-                    let capabilities_manager = capabilities_manager.clone();
-                    let wanted_capabilities = wanted_capabilities.clone();
-                    async move {
-                        let mut capabilities_manager = capabilities_manager.lock().await;
-                        capabilities_manager
-                            .set(serde_json::to_vec(&wanted_capabilities).unwrap())
-                            .await
-                    }
-                },
-            )
+        let mut capabilities_manager = manager
+            .get_device_capabilities_manager(self.spec.ieee_address.clone(), friendly_name)
+            .await
+            .emit_event_with_path(eventmanager, "spec.friendly_name")
             .await?;
-        }
+        let current_capabilities = capabilities_manager
+            .get()
+            .await
+            .emit_event_with_path(eventmanager, "spec.friendly_name")
+            .await?;
+
+        let capabilities_manager = Arc::new(Mutex::new(capabilities_manager));
+        do_sync(
+            eventmanager,
+            "capability",
+            "spec.capabilities",
+            wanted_capabilities,
+            &current_capabilities,
+            || {
+                let capabilities_manager = capabilities_manager.clone();
+                let wanted_capabilities = wanted_capabilities.clone();
+                async move {
+                    let mut capabilities_manager = capabilities_manager.lock().await;
+                    capabilities_manager.set(wanted_capabilities.into()).await
+                }
+            },
+        )
+        .await?;
         Ok(())
     }
 }

@@ -21,6 +21,7 @@ use super::{
         DeviceOptionsManager, DeviceRenamer, Handler, HealthChecker,
     },
     subscription::TopicSubscription,
+    BridgeInfoPayload,
 };
 use crate::{
     background_task,
@@ -727,6 +728,16 @@ impl Manager {
             .await
     }
 
+    pub async fn get_bridge_info(self: &Arc<Self>) -> Result<BridgeInfoPayload, Error> {
+        self.bridge_info_tracker
+            .get_or_init(|| BridgeInfoTracker::new(self.clone()))
+            .await?
+            .lock()
+            .await
+            .get()
+            .await
+    }
+
     pub async fn rename_device(
         self: &Arc<Self>,
         ieee_address: &str,
@@ -737,25 +748,18 @@ impl Manager {
             .await
     }
 
-    pub async fn get_device_options_manager(
+    pub fn get_device_options_manager(
         self: &Arc<Self>,
         ieee_address: String,
-    ) -> Result<DeviceOptionsManager, Error> {
-        let tracker = self
-            .bridge_info_tracker
-            .get_or_init(|| BridgeInfoTracker::new(self.clone()))
-            .await?;
-        Ok(DeviceOptionsManager::new(
-            self.clone(),
-            tracker,
-            ieee_address,
-        ))
+    ) -> DeviceOptionsManager {
+        DeviceOptionsManager::new(self.clone(), ieee_address)
     }
 
     pub async fn get_device_capabilities_manager(
         self: &Arc<Self>,
+        ieee_address: String,
         friendly_name: String,
     ) -> Result<DeviceCapabilitiesManager, Error> {
-        DeviceCapabilitiesManager::new(self.clone(), friendly_name).await
+        DeviceCapabilitiesManager::new(self.clone(), ieee_address, friendly_name).await
     }
 }

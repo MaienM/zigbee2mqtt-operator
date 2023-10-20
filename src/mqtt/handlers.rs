@@ -3,15 +3,15 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use futures::Stream;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tokio::{
-    sync::Mutex,
     time::{sleep, timeout},
     try_join,
 };
 use tracing::debug;
 
 use super::{
+    exposes::{DeviceCapabilitiesSchema, DeviceOptionsSchema, Processor},
     manager::Manager,
     subscription::{TopicStream, TopicSubscription},
 };
@@ -182,16 +182,18 @@ impl BridgeDevicesTracker {
                         None,
                     ))
                 } else if !device.supported {
-                    Err(Error::InvalidResource(
-                        "device is not supported by Zigbee2MQTT".to_string(),
-                    ))
+                    Err(Error::InvalidResource {
+                        field_path: String::new(),
+                        message: "device is not supported by Zigbee2MQTT".to_string(),
+                    })
                 } else {
                     Ok(device)
                 }
             }
-            None => Err(Error::InvalidResource(
-                "device is not known to Zigbee2MQTT".to_string(),
-            )),
+            None => Err(Error::InvalidResource {
+                field_path: String::new(),
+                message: "device is not known to Zigbee2MQTT".to_string(),
+            }),
         }
     }
 }
@@ -202,6 +204,12 @@ pub struct BridgeDevice {
     pub friendly_name: String,
     pub interview_completed: bool,
     pub supported: bool,
+    pub definition: Option<BridgeDeviceDefinition>,
+}
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct BridgeDeviceDefinition {
+    pub options: DeviceOptionsSchema,
+    pub exposes: DeviceCapabilitiesSchema,
 }
 
 //
@@ -213,28 +221,13 @@ create_topic_tracker!(
     BridgeInfoPayload,
     "bridge/info"
 );
-impl BridgeInfoTracker {
-    pub async fn get_device_options(
-        &mut self,
-        ieee_address: &str,
-    ) -> Result<HashMap<String, Value>, Error> {
-        Ok(self
-            .get()
-            .await?
-            .config
-            .devices
-            .get(ieee_address)
-            .cloned()
-            .unwrap_or_default())
-    }
-}
 #[derive(Deserialize, Debug, Clone)]
 pub struct BridgeInfoPayload {
     pub config: BridgeInfoConfig,
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct BridgeInfoConfig {
-    pub devices: HashMap<String, HashMap<String, Value>>,
+    pub devices: HashMap<String, Map<String, Value>>,
 }
 ///
 /// Zigbee2MQTT device rename request.
@@ -299,31 +292,23 @@ struct DeviceRenamePayload {
 ///
 pub struct DeviceOptionsManager {
     manager: Arc<Manager>,
-    tracker: Arc<Mutex<BridgeInfoTracker>>,
     ieee_address: String,
 }
 impl Handler for DeviceOptionsManager {
-    type Result = HashMap<String, Value>;
+    type Result = Map<String, Value>;
 }
 impl DeviceOptionsManager {
-    pub fn new(
-        manager: Arc<Manager>,
-        tracker: Arc<Mutex<BridgeInfoTracker>>,
-        ieee_address: String,
-    ) -> Self {
+    pub fn new(manager: Arc<Manager>, ieee_address: String) -> Self {
         Self {
             manager,
-            tracker,
             ieee_address,
         }
     }
 
     pub async fn get(&mut self) -> Result<<Self as Handler>::Result, Error> {
         Ok(self
-            .tracker
-            .lock()
-            .await
-            .get()
+            .manager
+            .get_bridge_info()
             .await?
             .config
             .devices
@@ -336,6 +321,14 @@ impl DeviceOptionsManager {
         &mut self,
         options: &<Self as Handler>::Result,
     ) -> Result<<Self as Handler>::Result, Error> {
+        let device = self
+            .manager
+            .get_bridge_device_definition(&self.ieee_address)
+            .await?
+            .definition
+            .unwrap_or_default();
+        let options = device.options.process(options.clone().into())?;
+
         let subscription = self
             .manager
             .subscribe_topic("bridge/response/device/options", 8)
@@ -381,6 +374,7 @@ struct DeviceOptionsPayload {
 ///
 pub struct DeviceCapabilitiesManager {
     manager: Arc<Manager>,
+    ieee_address: String,
     friendly_name: String,
     log_subscription: TopicSubscription,
     device_subscription: TopicSubscription,
@@ -389,11 +383,16 @@ impl Handler for DeviceCapabilitiesManager {
     type Result = DeviceCapabilitiesPayload;
 }
 impl DeviceCapabilitiesManager {
-    pub async fn new(manager: Arc<Manager>, friendly_name: String) -> Result<Self, Error> {
+    pub async fn new(
+        manager: Arc<Manager>,
+        ieee_address: String,
+        friendly_name: String,
+    ) -> Result<Self, Error> {
         Ok(Self {
             log_subscription: manager.subscribe_topic("bridge/log", 16).await?,
             device_subscription: manager.subscribe_topic(&friendly_name, 1).await?,
             manager,
+            ieee_address,
             friendly_name,
         })
     }
@@ -415,7 +414,7 @@ impl DeviceCapabilitiesManager {
             .device_subscription
             .stream_swap()
             .filter_lag()
-            .parse_payload::<HashMap<String, Value>>();
+            .parse_payload::<Map<String, Value>>();
         let mut log_recv = self
             .log_subscription
             .stream_swap()
@@ -478,14 +477,28 @@ impl DeviceCapabilitiesManager {
         self.run("get", r#"{"state":""}"#).await
     }
 
-    pub async fn set<T>(&mut self, message: T) -> Result<<Self as Handler>::Result, Error>
-    where
-        T: Into<Vec<u8>> + Debug + Clone,
-    {
-        self.run("set", message).await
+    pub async fn set(&mut self, capabilities: Value) -> Result<<Self as Handler>::Result, Error> {
+        let device = self
+            .manager
+            .get_bridge_device_definition(&self.ieee_address)
+            .await?
+            .definition
+            .unwrap_or_default();
+        let capabilities = device.exposes.process(capabilities)?;
+
+        self.run(
+            "set",
+            serde_json::to_string(&capabilities).map_err(|err| {
+                Error::ActionFailed(
+                    "Unable to convert capabilities to JSON.".to_owned(),
+                    Some(Arc::new(Box::new(err))),
+                )
+            })?,
+        )
+        .await
     }
 }
-type DeviceCapabilitiesPayload = HashMap<String, Value>;
+type DeviceCapabilitiesPayload = Map<String, Value>;
 #[derive(Deserialize)]
 struct DeviceCapabilitiesLogResponse {
     pub message: String,

@@ -1,12 +1,12 @@
 //! Definitions of the resources managed by this operator.
 
-use std::{collections::HashMap, str::from_utf8, sync::Arc};
+use std::{str::from_utf8, sync::Arc};
 
 use k8s_openapi::{api::core::v1::Secret, NamespaceResourceScope};
 use kube::{Api, Client, CustomResource, Resource, ResourceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use serde_json::{Map, Value as JsonValue};
 
 use crate::{error::Error, ResourceLocalExt};
 
@@ -87,11 +87,11 @@ pub struct DeviceSpec {
     /// The device specific settings can be found in the 'Settings (specific)' tab in the UI, with more details in the [supported devices listings](https://www.zigbee2mqtt.io/supported-devices/).
     ///
     /// Note that unset/null and `{}` are different; the former will not manage options for this device at all while the latter will set all options to their default values.
-    pub options: Option<HashMap<String, JsonValue>>,
+    pub options: Option<Map<String, JsonValue>>,
     /// Capabilities to set.
     ///
     /// The available capabilities can be found in the 'Exposes' tab in the settings, with more details in the [supported devices listings](https://www.zigbee2mqtt.io/supported-devices/).
-    pub capabilities: Option<HashMap<String, JsonValue>>,
+    pub capabilities: Option<Map<String, JsonValue>>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
 #[allow(missing_docs)]
@@ -143,7 +143,13 @@ impl Value {
                     .as_ref()
                     .cloned()
                     .or_else(|| resource.namespace().clone())
-                    .ok_or_else(|| Error::InvalidResource(format!("parent resource {id} does not have a namespace, so reference must specify namespace", id=resource.id())))?
+                    .ok_or_else(|| Error::InvalidResource {
+                        field_path: ".namespace".to_string(),
+                        message: format!(
+                            "parent resource {id} does not have a namespace, so reference must specify namespace",
+                            id=resource.id(),
+                        )
+                    })?
                     .to_string();
                 let key = &skr.key;
                 let secret = Api::<Secret>::namespaced(client.clone(), namespace)
@@ -160,9 +166,10 @@ impl Value {
                     .unwrap_or_default()
                     .get(&skr.key)
                     .map(|d| from_utf8(&d.0).map(str::to_string))
-                    .ok_or(Error::InvalidResource(format!(
-                        "secret must have data with key {key}"
-                    )))?
+                    .ok_or(Error::InvalidResource {
+                        field_path: ".key".to_string(),
+                        message: format!("secret does not have data with {key}"),
+                    })?
                     .map_err(|err| {
                         Error::ActionFailed(
                             "failed to parse secret data".to_string(),

@@ -26,8 +26,15 @@ pub enum Error {
     FinalizerError(#[source] Arc<Box<FinalizerError<Error>>>),
 
     /// A misconfiguration of a Kubernetes resource. This is only for problems that require a change to a resource to resolve, not for temporary failures that might resolve by themselves.
-    #[error("Invalid resource: {0}")]
-    InvalidResource(String),
+    #[error("Invalid resource at {field_path}: {message}")]
+    InvalidResource {
+        /// The path of the portion of the resource that is problematic, like [`EventCore::field_path`].
+        ///
+        /// This should be a partial JSON path that can be appended directly to another path (e.g. `.foo` or `[12]`) so that the full path can be emitted easily with [`EmittableResult::emit_event_with_path`].
+        field_path: String,
+        /// A human-readable message describing the problem with the value.
+        message: String,
+    },
 
     /// The MQTT broker responded in an unexpected manner.
     #[error("MQTT error: {0}{err}", err = maybe!(.1))]
@@ -77,20 +84,14 @@ pub struct EmittedError(pub Error);
 /// Helper to emit an [`enum@Error`] contained inside a [`Result`], converting it to an [`EmittedError`] in the process.
 #[async_trait]
 pub trait EmittableResult<V> {
-    /// Publish error.
-    async fn emit_event<F>(self, manager: &EventManager) -> Result<V, EmittedError>;
-
-    /// Shorthand version of [`EmittableResult::emit_event_map`] which sets only [`EventCore::field_path`].
+    /// Emit the event, using the given path as context for the source of the error (see [`EventCore::field_path`]).
+    ///
+    /// For [`Error::InvalidResource`] the paths will be combined as `{field_path}{error.field_path}`.
     async fn emit_event_with_path(
         self,
         manager: &EventManager,
         field_path: &str,
     ) -> Result<V, EmittedError>;
-
-    /// Publish error, allowing closure to alter [`EventCore`] beforehand.
-    async fn emit_event_map<F>(self, manager: &EventManager, f: F) -> Result<V, EmittedError>
-    where
-        F: FnOnce(&mut EventCore) + Send;
 
     /// Mark error as published without actually publishing anything. This should only be used in cases where one or more events have already been published for the error manually.
     fn fake_emit_event(self) -> Result<V, EmittedError>;
@@ -100,35 +101,33 @@ impl<V> EmittableResult<V> for Result<V, Error>
 where
     V: Send,
 {
-    async fn emit_event<F>(self, manager: &EventManager) -> Result<V, EmittedError> {
-        self.emit_event_map(manager, |_| {}).await
-    }
-
     async fn emit_event_with_path(
-        self,
+        mut self,
         manager: &EventManager,
         field_path: &str,
     ) -> Result<V, EmittedError> {
-        self.emit_event_map(manager, |event| {
-            event.field_path = Some(field_path.to_string());
-        })
-        .await
-    }
+        // Special case for Error::InvalidResource where we combine the two paths and use the result for both the InvalidResource path and the EventCore path.
+        let field_path = match self {
+            Err(Error::InvalidResource {
+                field_path: ref mut error_field_path,
+                ..
+            }) => {
+                *error_field_path = format!("{field_path}{error_field_path}");
+                error_field_path.clone()
+            }
+            _ => field_path.to_owned(),
+        };
 
-    async fn emit_event_map<F>(self, manager: &EventManager, f: F) -> Result<V, EmittedError>
-    where
-        F: FnOnce(&mut EventCore) + Send,
-    {
         if let Err(ref error) = self {
-            let mut event = EventCore {
-                action: "Reconciling".to_string(),
-                note: Some(error.to_string()),
-                reason: "Created".to_string(),
-                type_: EventType::Warning,
-                ..EventCore::default()
-            };
-            f(&mut event);
-            manager.publish_nolog(event).await;
+            manager
+                .publish_nolog(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(error.to_string()),
+                    reason: "Created".to_string(),
+                    type_: EventType::Warning,
+                    field_path: Some(field_path),
+                })
+                .await;
         }
         self.map_err(EmittedError)
     }
