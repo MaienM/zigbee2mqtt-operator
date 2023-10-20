@@ -103,8 +103,7 @@ where
             serde_json::from_slice::<T>(&value.payload).map_err(|err| Error::SubscriptionError {
                 topic: topic.clone(),
                 message: format!(
-                    "failed to parse message {payload:?} to {type_}",
-                    payload = value.payload,
+                    "failed to parse message to {type_}",
                     type_ = type_name::<T>(),
                 ),
                 source: Some(Arc::new(Box::new(err))),
