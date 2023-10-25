@@ -14,11 +14,10 @@ use once_cell::sync::Lazy;
 use sync_utils::AwaitableMap;
 
 pub mod crds;
-mod device;
 pub mod error;
 mod event_manager;
-mod instance;
 mod mqtt;
+mod reconcilers;
 mod status_manager;
 mod sync_utils;
 
