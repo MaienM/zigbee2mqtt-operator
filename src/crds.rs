@@ -2,18 +2,19 @@
 
 use std::{str::from_utf8, sync::Arc};
 
+use garde::Validate;
 use k8s_openapi::{api::core::v1::Secret, NamespaceResourceScope};
 use kube::{Api, Client, CustomResource, Resource, ResourceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value as JsonValue};
+use serde_json::{Map, Value};
 
 use crate::{error::Error, ResourceLocalExt};
 
 ///
 /// A Zigbee2MQTT instance.
 ///
-#[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[kube(
     group = "zigbee2mqtt.maienm.com",
     version = "v1",
@@ -24,23 +25,29 @@ use crate::{error::Error, ResourceLocalExt};
 )]
 pub struct InstanceSpec {
     /// The host of the MQTT broker.
+    #[garde(length(min = 1))]
     pub host: String,
     /// The port of the MQTT broker. Defaults to 1883.
     #[serde(default = "default_instance_port")]
+    #[garde(range(min = 1, max = 65535))]
     pub port: u16,
     /// The credentials to authenticate with.
+    #[garde(dive)]
     pub credentials: Option<InstanceSpecCredentials>,
     /// The base topic. Should match the mqtt.base_topic option of the Zigbee2MQTT instance. Defaults to the default used by Zigbee2MQTT ('zigbee2mqtt').
     #[serde(default = "default_instance_base_topic")]
+    #[garde(ascii, length(min = 1))]
     pub base_topic: String,
 }
-#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[allow(missing_docs)]
 pub struct InstanceSpecCredentials {
     /// The username to authenticate with.
-    pub username: Value,
+    #[garde(dive)]
+    pub username: ValueFrom,
     /// The password to authenticate with.
-    pub password: Value,
+    #[garde(dive)]
+    pub password: ValueFrom,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
 #[allow(missing_docs)]
@@ -65,7 +72,7 @@ fn default_instance() -> String {
 ///
 /// See <https://www.zigbee2mqtt.io/guide/configuration/devices-groups.html#devices-and-groups>.
 ///
-#[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[kube(
     group = "zigbee2mqtt.maienm.com",
     version = "v1",
@@ -78,10 +85,13 @@ fn default_instance() -> String {
 pub struct DeviceSpec {
     /// The instance this device belongs to. Defaults to 'default'.
     #[serde(default = "default_instance")]
+    #[garde(ascii, length(min = 1, max = 63))]
     pub instance: String,
     /// The device address.
+    #[garde(ascii, length(min = 3))]
     pub ieee_address: String,
     /// Friendly name.
+    #[garde(ascii, length(min = 1))]
     pub friendly_name: Option<String>,
     /// The authorative options for the device.
     ///
@@ -92,11 +102,13 @@ pub struct DeviceSpec {
     /// The device specific settings can be found in the 'Settings (specific)' tab in the UI, with more details in the [supported devices listings](https://www.zigbee2mqtt.io/supported-devices/).
     ///
     /// Note that unset/null and `{}` are different; the former will not manage options for this device at all while the latter will set all options to their default values.
-    pub options: Option<Map<String, JsonValue>>,
+    #[garde(skip)]
+    pub options: Option<Map<String, Value>>,
     /// Capabilities to set.
     ///
     /// The available capabilities can be found in the 'Exposes' tab in the settings, with more details in the [supported devices listings](https://www.zigbee2mqtt.io/supported-devices/).
-    pub capabilities: Option<Map<String, JsonValue>>,
+    #[garde(skip)]
+    pub capabilities: Option<Map<String, Value>>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
 #[allow(missing_docs)]
@@ -112,7 +124,7 @@ pub struct DeviceStatus {
 ///
 /// See <https://www.zigbee2mqtt.io/guide/usage/groups.html>.
 ///
-#[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[kube(
     group = "zigbee2mqtt.maienm.com",
     version = "v1",
@@ -125,12 +137,15 @@ pub struct DeviceStatus {
 pub struct GroupSpec {
     /// The instance this group belongs to. Defaults to 'default'.
     #[serde(default = "default_instance")]
+    #[garde(ascii, length(min = 1, max = 63))]
     pub instance: String,
     /// The name of the group.
+    #[garde(ascii, length(min = 1))]
     pub friendly_name: String,
     /// The ID of the group.
     ///
     /// If not provided a random id will be generated for the group.
+    #[garde(range(min = 1))]
     pub id: Option<usize>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
@@ -147,22 +162,28 @@ pub struct GroupStatus {
 ///
 /// A value that can be indirect, like environment variables.
 ///
-#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[allow(missing_docs)]
-pub enum Value {
+pub enum ValueFrom {
     #[serde(rename = "value")]
-    Inline(String),
+    Inline(#[garde(length(min = 1))] String),
     #[serde(rename = "valueFrom", rename_all = "camelCase")]
-    Secret { secret_key_ref: SecretKeyRef },
+    Secret {
+        #[garde(dive)]
+        secret_key_ref: SecretKeyRef,
+    },
 }
-#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[allow(missing_docs)]
 pub struct SecretKeyRef {
+    #[garde(ascii, length(min = 1, max = 63))]
     namespace: Option<String>,
+    #[garde(ascii, length(min = 1, max = 63))]
     name: String,
+    #[garde(ascii)]
     key: String,
 }
-impl Value {
+impl ValueFrom {
     /// Get the current value.
     ///
     /// # Errors
@@ -173,8 +194,8 @@ impl Value {
         T: Resource<Scope = NamespaceResourceScope> + ResourceLocalExt,
     {
         match self {
-            Value::Inline(v) => Ok(v.clone()),
-            Value::Secret {
+            ValueFrom::Inline(v) => Ok(v.clone()),
+            ValueFrom::Secret {
                 secret_key_ref: skr,
             } => {
                 let namespace = &*skr
