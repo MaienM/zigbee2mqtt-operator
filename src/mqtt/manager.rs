@@ -17,8 +17,9 @@ use veil::Redact;
 
 use super::{
     handlers::{
-        BridgeDevice, BridgeDevicesTracker, BridgeInfoTracker, DeviceCapabilitiesManager,
-        DeviceOptionsManager, DeviceRenamer, HealthChecker,
+        BridgeDevice, BridgeDevicesTracker, BridgeGroup, BridgeGroupsTracker, BridgeInfoTracker,
+        DeviceCapabilitiesManager, DeviceOptionsManager, DeviceRenamer, GroupCreator, GroupDeletor,
+        GroupRenamer, HealthChecker,
     },
     subscription::TopicSubscription,
     BridgeInfoPayload,
@@ -275,6 +276,7 @@ pub struct Manager {
     subscription_lock: LockableNotify,
     bridge_info_tracker: OnceCellMutex<BridgeInfoTracker>,
     bridge_devices_tracker: OnceCellMutex<BridgeDevicesTracker>,
+    bridge_groups_tracker: OnceCellMutex<BridgeGroupsTracker>,
 }
 impl Manager {
     pub async fn new(
@@ -370,6 +372,7 @@ impl Manager {
             subscription_lock: LockableNotify::new(),
             bridge_info_tracker: OnceCellMutex::new(),
             bridge_devices_tracker: OnceCellMutex::new(),
+            bridge_groups_tracker: OnceCellMutex::new(),
         });
 
         // Start background tasks.
@@ -762,5 +765,57 @@ impl Manager {
         friendly_name: String,
     ) -> Result<DeviceCapabilitiesManager, Error> {
         DeviceCapabilitiesManager::new(self.clone(), ieee_address, friendly_name).await
+    }
+
+    pub async fn get_group_by_id(
+        self: &Arc<Self>,
+        id: usize,
+    ) -> Result<Option<BridgeGroup>, Error> {
+        self.bridge_groups_tracker
+            .get_or_init(|| BridgeGroupsTracker::new(self.clone()))
+            .await?
+            .lock()
+            .await
+            .get_by_id(id)
+            .await
+    }
+
+    pub async fn get_group_by_friendly_name(
+        self: &Arc<Self>,
+        friendly_name: &str,
+    ) -> Result<Option<BridgeGroup>, Error> {
+        self.bridge_groups_tracker
+            .get_or_init(|| BridgeGroupsTracker::new(self.clone()))
+            .await?
+            .lock()
+            .await
+            .get_by_friendly_name(friendly_name)
+            .await
+    }
+
+    pub async fn create_group(
+        self: &Arc<Self>,
+        id: Option<usize>,
+        friendly_name: &str,
+    ) -> Result<usize, Error> {
+        GroupCreator::new(self.clone())
+            .await?
+            .run(id, friendly_name)
+            .await
+    }
+
+    pub async fn delete_group(self: &Arc<Self>, id: usize) -> Result<(), Error> {
+        GroupDeletor::new(self.clone()).await?.run(id).await
+    }
+
+    pub async fn rename_group(
+        self: &Arc<Self>,
+        id: usize,
+        friendly_name: &str,
+    ) -> Result<(), Error> {
+        GroupRenamer::new(self.clone())
+            .await?
+            .run(id, friendly_name)
+            .await
     }
 }

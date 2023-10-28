@@ -11,7 +11,7 @@ use serde_json::{Map, Value as JsonValue};
 use crate::{error::Error, ResourceLocalExt};
 
 ///
-/// A zigbee2mqtt instance.
+/// A Zigbee2MQTT instance.
 ///
 #[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema)]
 #[kube(
@@ -56,9 +56,14 @@ fn default_instance_port() -> u16 {
 fn default_instance_base_topic() -> String {
     "zigbee2mqtt".to_string()
 }
+fn default_instance() -> String {
+    "default".to_string()
+}
 
 ///
-/// A zigbee2mqtt device.
+/// A Zigbee2MQTT device.
+///
+/// See <https://www.zigbee2mqtt.io/guide/configuration/devices-groups.html#devices-and-groups>.
 ///
 #[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema)]
 #[kube(
@@ -72,7 +77,7 @@ fn default_instance_base_topic() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct DeviceSpec {
     /// The instance this device belongs to. Defaults to 'default'.
-    #[serde(default = "default_device_instance")]
+    #[serde(default = "default_instance")]
     pub instance: String,
     /// The device address.
     pub ieee_address: String,
@@ -101,8 +106,42 @@ pub struct DeviceStatus {
     /// Whether the device is in the desired state.
     pub synced: Option<bool>,
 }
-fn default_device_instance() -> String {
-    "default".to_string()
+
+///
+/// A Zigbee2MQTT group.
+///
+/// See <https://www.zigbee2mqtt.io/guide/usage/groups.html>.
+///
+#[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[kube(
+    group = "zigbee2mqtt.maienm.com",
+    version = "v1",
+    kind = "Group",
+    plural = "groups",
+    namespaced,
+    status = "GroupStatus"
+)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupSpec {
+    /// The instance this group belongs to. Defaults to 'default'.
+    #[serde(default = "default_instance")]
+    pub instance: String,
+    /// The name of the group.
+    pub friendly_name: String,
+    /// The ID of the group.
+    ///
+    /// If not provided a random id will be generated for the group.
+    pub id: Option<usize>,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
+#[allow(missing_docs)]
+pub struct GroupStatus {
+    /// Whether the group exist.
+    pub exists: Option<bool>,
+    /// Whether the group is in the desired state.
+    pub synced: Option<bool>,
+    /// The group's ID.
+    pub id: Option<usize>,
 }
 
 ///

@@ -20,7 +20,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use tokio::join;
 use tracing::{error_span, info_span};
 use zigbee2mqtt_operator::{
-    crds::{Device, Instance},
+    crds::{Device, Group, Instance},
     error::Error,
     Context, Reconciler, ResourceLocalExt, State,
 };
@@ -119,5 +119,6 @@ async fn main() {
     join!(
         start_controller::<Instance>(client.clone(), ctx.clone()),
         start_controller::<Device>(client.clone(), ctx.clone()),
+        start_controller::<Group>(client.clone(), ctx.clone()),
     );
 }
