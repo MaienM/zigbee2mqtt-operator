@@ -470,10 +470,16 @@ where
             return Ok(value);
         };
 
-        let result = self
-            .type_
-            .process(item)
-            .map_err(|err| err.prefix_path(format!(".{property}", property = self.property)))?;
+        let result = match item {
+            Value::Null => {
+                // Null value indicates unset/reset, so this is always valid.
+                Value::Null
+            }
+            item => self
+                .type_
+                .process(item)
+                .map_err(|err| err.prefix_path(format!(".{property}", property = self.property)))?,
+        };
         object.insert(self.property.clone(), result);
 
         Ok(value)
@@ -821,12 +827,18 @@ mod tests {
         fn string() {
             let expose = List::default();
             assert_roundtrip!(expose, vec!["HELLO", "WORLD"].into());
+
+            let err = Err(InvalidValue {
+                message: "Must be a string.".to_owned(),
+                path: "[1]".to_owned(),
+            });
             assert_eq!(
                 expose.process(Value::Array(vec!["HELLO".into(), 10.into()])),
-                Err(InvalidValue {
-                    message: "Must be a string.".to_owned(),
-                    path: "[1]".to_owned(),
-                }),
+                err,
+            );
+            assert_eq!(
+                expose.process(Value::Array(vec!["HELLO".into(), Value::Null])),
+                err,
             );
         }
 
@@ -837,12 +849,18 @@ mod tests {
                 .build()
                 .unwrap();
             assert_roundtrip!(expose, vec![10, 20].into());
+
+            let err = Err(InvalidValue {
+                message: "Must be a number.".to_owned(),
+                path: "[0]".to_owned(),
+            });
             assert_eq!(
                 expose.process(Value::Array(vec!["HELLO".into(), 10.into()])),
-                Err(InvalidValue {
-                    message: "Must be a number.".to_owned(),
-                    path: "[0]".to_owned(),
-                }),
+                err,
+            );
+            assert_eq!(
+                expose.process(Value::Array(vec![Value::Null, 10.into()])),
+                err,
             );
         }
 
@@ -1047,6 +1065,17 @@ mod tests {
                     "num": 25.0,
                     "enum": "BLUE",
                 })),
+            );
+        }
+
+        #[test]
+        fn null() {
+            // Null value indicatee a field should be reset to default.
+            assert_roundtrip!(
+                EXPOSE,
+                json!({
+                    "num": null,
+                }),
             );
         }
 
