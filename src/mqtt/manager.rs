@@ -18,7 +18,7 @@ use veil::Redact;
 use super::{
     handlers::{
         BridgeDevice, BridgeDevicesTracker, BridgeInfoTracker, DeviceCapabilitiesManager,
-        DeviceOptionsManager, DeviceRenamer, Handler, HealthChecker,
+        DeviceOptionsManager, DeviceRenamer, HealthChecker,
     },
     subscription::TopicSubscription,
     BridgeInfoPayload,
@@ -715,19 +715,6 @@ impl Manager {
             })
     }
 
-    pub async fn get_bridge_device_definition(
-        self: &Arc<Self>,
-        ieee_address: &str,
-    ) -> Result<BridgeDevice, Error> {
-        self.bridge_devices_tracker
-            .get_or_init(|| BridgeDevicesTracker::new(self.clone()))
-            .await?
-            .lock()
-            .await
-            .get_device(ieee_address)
-            .await
-    }
-
     pub async fn get_bridge_info(self: &Arc<Self>) -> Result<BridgeInfoPayload, Error> {
         self.bridge_info_tracker
             .get_or_init(|| BridgeInfoTracker::new(self.clone()))
@@ -738,21 +725,35 @@ impl Manager {
             .await
     }
 
+    pub async fn get_bridge_device_definition(
+        self: &Arc<Self>,
+        ieee_address: &str,
+    ) -> Result<BridgeDevice, Error> {
+        self.bridge_devices_tracker
+            .get_or_init(|| BridgeDevicesTracker::new(self.clone()))
+            .await?
+            .lock()
+            .await
+            .get(ieee_address)
+            .await
+    }
+
     pub async fn rename_device(
         self: &Arc<Self>,
         ieee_address: &str,
         friendly_name: &str,
-    ) -> Result<<DeviceRenamer as Handler>::Result, Error> {
+    ) -> Result<(), Error> {
         DeviceRenamer::new(self.clone())
+            .await?
             .run(ieee_address, friendly_name)
             .await
     }
 
-    pub fn get_device_options_manager(
+    pub async fn get_device_options_manager(
         self: &Arc<Self>,
         ieee_address: String,
-    ) -> DeviceOptionsManager {
-        DeviceOptionsManager::new(self.clone(), ieee_address)
+    ) -> Result<DeviceOptionsManager, Error> {
+        DeviceOptionsManager::new(self.clone(), ieee_address).await
     }
 
     pub async fn get_device_capabilities_manager(

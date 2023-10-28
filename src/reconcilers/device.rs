@@ -213,8 +213,11 @@ impl Device {
             return Ok(());
         };
 
-        let mut options_manager =
-            manager.get_device_options_manager(self.spec.ieee_address.clone());
+        let mut options_manager = manager
+            .get_device_options_manager(self.spec.ieee_address.clone())
+            .await
+            .emit_event_with_path(eventmanager, "spec.ieee_address")
+            .await?;
         let current_options = options_manager
             .get()
             .await
