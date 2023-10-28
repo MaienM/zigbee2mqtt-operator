@@ -1,6 +1,6 @@
 //! Reconcile logic for [`Group`].
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use kube::{runtime::controller::Action, ResourceExt};
@@ -11,7 +11,7 @@ use crate::{
     event_manager::{EventManager, EventType},
     mqtt::{BridgeGroup, Manager},
     status_manager::StatusManager,
-    Context, EmittedError, EventCore, Reconciler, TIMEOUT,
+    Context, EmittedError, EventCore, Reconciler, RECONCILE_INTERVAL, TIMEOUT,
 };
 
 #[async_trait]
@@ -71,7 +71,7 @@ impl Reconciler for Group {
             s.synced = Some(true);
         });
 
-        return Ok(Action::requeue(Duration::from_secs(1)));
+        Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 
     async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
@@ -86,7 +86,7 @@ impl Reconciler for Group {
                 .await?;
         }
 
-        return Ok(Action::requeue(Duration::from_secs(5 * 60)));
+        Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 }
 impl Group {
@@ -108,7 +108,7 @@ impl Group {
         let instance = format!("{}/{}", self.namespace().unwrap(), self.spec.instance);
         ctx.state
             .managers
-            .get(&instance, TIMEOUT)
+            .get(&instance, *TIMEOUT)
             .await
             .emit_event_with_path(eventmanager, "spec.instance")
             .await

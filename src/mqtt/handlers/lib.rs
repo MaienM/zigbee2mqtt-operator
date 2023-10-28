@@ -50,7 +50,7 @@ where
         match &self.value {
             Some(value) => Ok(value.clone()),
             None => {
-                let value = self.subscription.next_noclose_timeout(TIMEOUT).await?;
+                let value = self.subscription.next_noclose_timeout(*TIMEOUT).await?;
                 self.value = Some(value.clone());
                 Ok(value)
             }
@@ -107,7 +107,7 @@ where
             .parse_payload::<RequestResponse<T::Response>>()
             .filter_ok(|v| T::matches(&data, v))
             .map_ok(RequestResponse::convert)
-            .next_noclose_timeout(TIMEOUT)
+            .next_noclose_timeout(*TIMEOUT)
             .await
     }
 }

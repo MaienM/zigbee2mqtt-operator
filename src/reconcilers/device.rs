@@ -1,6 +1,6 @@
 //! Reconcile logic for [`Device`].
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::Future;
@@ -14,7 +14,7 @@ use crate::{
     event_manager::{EventCore, EventManager, EventType},
     mqtt::Manager,
     status_manager::StatusManager,
-    Context, EmittedError, Reconciler, TIMEOUT,
+    Context, EmittedError, Reconciler, RECONCILE_INTERVAL, TIMEOUT,
 };
 
 struct Difference {
@@ -135,7 +135,7 @@ impl Reconciler for Device {
         let manager = ctx
             .state
             .managers
-            .get(&instance, TIMEOUT)
+            .get(&instance, *TIMEOUT)
             .await
             .emit_event_with_path(&eventmanager, "spec.instance")
             .await?;
@@ -159,11 +159,11 @@ impl Reconciler for Device {
             s.synced = Some(true);
         });
 
-        return Ok(Action::requeue(Duration::from_secs(1)));
+        Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 
     async fn cleanup(&self, _ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        return Ok(Action::requeue(Duration::from_secs(5 * 60)));
+        Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 }
 impl Device {

@@ -1,4 +1,4 @@
-use std::{any::type_name, fmt::Debug, hash::Hash, sync::Arc, time::Duration};
+use std::{any::type_name, fmt::Debug, hash::Hash, sync::Arc};
 
 use futures::{
     future::{self},
@@ -22,7 +22,7 @@ use tracing::{error_span, info_span};
 use zigbee2mqtt_operator::{
     crds::{Device, Group, Instance},
     error::Error,
-    Context, Reconciler, ResourceLocalExt, State,
+    Context, Reconciler, ResourceLocalExt, State, RECONCILE_INTERVAL_FAILURE,
 };
 
 pub static FINALIZER: &str = "zigbee2mqtt.maienm.com";
@@ -70,7 +70,7 @@ where
         id = resource.id(),
         err = ?error,
     );
-    Action::requeue(Duration::from_secs(60))
+    Action::requeue(*RECONCILE_INTERVAL_FAILURE)
 }
 
 async fn start_controller<T>(client: Client, ctx: Arc<Context>)

@@ -14,7 +14,7 @@ use crate::{
     event_manager::EventManager,
     mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
     status_manager::StatusManager,
-    Context, EmittedError, Reconciler, ResourceLocalExt,
+    Context, EmittedError, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL,
 };
 
 #[async_trait]
@@ -111,7 +111,7 @@ impl Reconciler for Instance {
             manager_awaitable.set(manager).await;
         };
 
-        return Ok(Action::requeue(Duration::from_secs(15)));
+        Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 
     async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
@@ -122,7 +122,8 @@ impl Reconciler for Instance {
             }
             // No else clause because if getting the manager timed out this must mean that it was never created successfully, so there is nothing to close/cleanup.
         }
-        return Ok(Action::requeue(Duration::from_secs(5 * 60)));
+
+        Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 }
 impl Instance {

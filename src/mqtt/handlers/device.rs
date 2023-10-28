@@ -261,7 +261,7 @@ impl CapabilitiesManager {
         try_join! {
             nonterminating!({
                 // Occasionally Zigbee2MQTT appears to miss a message (not sure which component is actually at fault for that), so re-send it once half the timeout has elapsed.
-                sleep(TIMEOUT / 2).await;
+                sleep(*TIMEOUT / 2).await;
                 debug!(
                     "half the timeout elapsed while attempting to {verb} current state of device {friendly_name}, resending payload",
                     friendly_name=self.friendly_name,
@@ -269,7 +269,7 @@ impl CapabilitiesManager {
                 resend.await
             }),
             terminating!({
-                sleep(TIMEOUT).await;
+                sleep(*TIMEOUT).await;
                 Err(Error::Zigbee2MQTTError(format!(
                     "timeout while attempting to {verb} current state of device {friendly_name}",
                     friendly_name = self.friendly_name,
@@ -277,7 +277,7 @@ impl CapabilitiesManager {
             }),
             terminating!({
                 // Sometimes the device capabilities that are sent right after a set are still the old values rather than the new ones, so we look at last rather than next.
-                device_recv.last(TIMEOUT, Duration::from_secs(1)).await
+                device_recv.last(*TIMEOUT, Duration::from_secs(1)).await
             }),
             terminating!({
                 let log = log_recv.next_noclose().await?;

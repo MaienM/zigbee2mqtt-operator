@@ -431,7 +431,7 @@ impl Manager {
                     Ok(Event::Outgoing(Outgoing::Disconnect)) | Err(_) => break,
                     _ => {}
                 },
-                _ = sleep(TIMEOUT) => {
+                _ = sleep(*TIMEOUT) => {
                     warn_span!("timeout while closing manager", id=self.id);
                     break;
                 }

@@ -22,7 +22,29 @@ mod status_manager;
 mod sync_utils;
 
 static NAME: Lazy<String> = Lazy::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
-const TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The timeout for responses/messages from Zigbee2MQTT.
+static TIMEOUT: Lazy<Duration> = Lazy::new(|| {
+    Duration::from_secs(env::var("Z2MOP_ACTION_TIMEOUT").map_or(5, |v| v.parse().unwrap()))
+});
+
+/// The maximum interval between reconciles of resources.
+///
+/// Changes to the K8S resource will immediately trigger a reconcile regardless of this interval, so this only dictates how quickly changes made on the Zigbee2MQTT side will be reconciled.
+pub static RECONCILE_INTERVAL: Lazy<Duration> = Lazy::new(|| {
+    Duration::from_secs(env::var("Z2MOP_RECONCILE_INTERVAL").map_or(60, |v| v.parse().unwrap()))
+});
+
+/// The maximum time to wait after a failed reconcile attempt before retrying.
+///
+/// Changes to the K8s resource will immediately trigger a reconcile, so this is only important for cases where the failure is temporary and the reconcile can succeed on a retry, not for cases where the resource is invalid in some way.
+pub static RECONCILE_INTERVAL_FAILURE: Lazy<Duration> = Lazy::new(|| {
+    Duration::from_secs(
+        env::var("Z2MOP_RECONCILE_INTERVAL_FAILURE")
+            .or(env::var("Z2MOP_RECONCILE_INTERVAL"))
+            .map_or(15, |v| v.parse().unwrap()),
+    )
+});
 
 /// The context that will be available to all reconcile actions.
 #[derive(Clone)]
