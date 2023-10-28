@@ -8,10 +8,10 @@ use kube::{runtime::controller::Action, ResourceExt};
 use crate::{
     crds::{Group, GroupStatus},
     error::{EmittableResult, Error},
-    event_manager::EventManager,
+    event_manager::{EventManager, EventType},
     mqtt::{BridgeGroup, Manager},
     status_manager::StatusManager,
-    Context, EmittedError, Reconciler, TIMEOUT,
+    Context, EmittedError, EventCore, Reconciler, TIMEOUT,
 };
 
 #[async_trait]
@@ -32,7 +32,26 @@ impl Reconciler for Group {
             s.exists = Some(false);
         });
 
-        let group = self.get_or_create_group(&manager, &eventmanager).await?;
+        let mut group = self.get_or_create_group(&manager, &eventmanager).await?;
+        if let Some(id) = self.spec.id {
+            if id != group.id {
+                eventmanager
+                    .publish(EventCore {
+                        action: "Reconciling".to_string(),
+                        note: Some("id changed, deleting and recreating group".to_owned()),
+                        reason: "Changed".to_string(),
+                        type_: EventType::Normal,
+                        field_path: Some("spec.id".to_owned()),
+                    })
+                    .await;
+                manager
+                    .delete_group(group.id)
+                    .await
+                    .emit_event_with_path(&eventmanager, "spec.id")
+                    .await?;
+                group = self.get_or_create_group(&manager, &eventmanager).await?;
+            }
+        }
 
         statusmanager.update(|s| {
             s.exists = Some(true);
