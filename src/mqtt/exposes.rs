@@ -616,8 +616,8 @@ mod tests {
     #[derive(Deserialize, Debug)]
     #[allow(dead_code)]
     struct Definition {
-        exposes: Vec<Schema>,
-        options: Vec<Schema>,
+        exposes: DeviceCapabilitiesSchema,
+        options: DeviceOptionsSchema,
     }
 
     #[test]
@@ -632,120 +632,157 @@ mod tests {
         };
     }
 
-    #[test]
-    fn process_binary() {
-        let expose = BinaryBuilder::default()
-            .value_on("ON".into())
-            .value_off("OFF".into())
-            .value_toggle(Some("TOGGLE".into()))
-            .build()
-            .unwrap();
-        assert_roundtrip!(expose, "ON".into());
-        assert_roundtrip!(expose, "OFF".into());
-        assert_eq!(
-            expose.process("TOGGLE".into()),
-            Err(InvalidValue::new(
-                r#"This will toggle the state on every reconcile. Use "ON" or "OFF" instead."#
-            ))
-        );
+    mod process_binary {
+        use pretty_assertions::assert_eq;
 
-        let err = Err(InvalidValue::new(r#"Must be either "ON" or "OFF"."#));
-        assert_eq!(expose.process("INVALID".into()), err);
-        assert_eq!(expose.process(10.into()), err);
-        assert_eq!(expose.process(true.into()), err);
-        assert_eq!(expose.process(vec!["ON"].into()), err);
+        use super::*;
+
+        static EXPOSE: Lazy<Binary> = Lazy::new(|| {
+            BinaryBuilder::default()
+                .value_on("ON".into())
+                .value_off("OFF".into())
+                .value_toggle(Some("TOGGLE".into()))
+                .build()
+                .unwrap()
+        });
+
+        #[test]
+        fn accept_on_off() {
+            assert_roundtrip!(EXPOSE, "ON".into());
+            assert_roundtrip!(EXPOSE, "OFF".into());
+        }
+
+        #[test]
+        fn reject_toggle() {
+            assert_eq!(
+                EXPOSE.process("TOGGLE".into()),
+                Err(InvalidValue::new(
+                    r#"This will toggle the state on every reconcile. Use "ON" or "OFF" instead."#
+                ))
+            );
+        }
+
+        #[test]
+        fn reject_other() {
+            let err = Err(InvalidValue::new(r#"Must be either "ON" or "OFF"."#));
+            assert_eq!(EXPOSE.process("INVALID".into()), err);
+            assert_eq!(EXPOSE.process(10.into()), err);
+            assert_eq!(EXPOSE.process(true.into()), err);
+            assert_eq!(EXPOSE.process(vec!["ON"].into()), err);
+        }
     }
 
-    #[test]
-    fn process_numeric() {
-        let expose = Numeric::default();
-        assert_roundtrip!(expose, 0.into());
-        assert_roundtrip!(expose, 50.into());
+    mod process_numeric {
+        use pretty_assertions::assert_eq;
 
-        let type_err = Err(InvalidValue::new("Must be a number."));
-        assert_eq!(expose.process("50".into()), type_err);
-        assert_eq!(expose.process(true.into()), type_err);
-        assert_eq!(expose.process(vec![10].into()), type_err);
+        use super::*;
 
-        let expose = NumericBuilder::default()
-            .value_min(Some(10.0))
-            .build()
-            .unwrap();
-        assert_eq!(
-            expose.process(0.into()),
-            Err(InvalidValue::new("Must be at least 10."))
-        );
-        assert_roundtrip!(expose, 50.into());
+        #[test]
+        fn unrestricted() {
+            let expose = Numeric::default();
+            assert_roundtrip!(expose, 0.into());
+            assert_roundtrip!(expose, 50.into());
 
-        let expose = NumericBuilder::default()
-            .value_max(Some(10.0))
-            .build()
-            .unwrap();
-        assert_roundtrip!(expose, 0.into());
-        assert_eq!(
-            expose.process(50.into()),
-            Err(InvalidValue::new("Must be at most 10."))
-        );
+            let type_err = Err(InvalidValue::new("Must be a number."));
+            assert_eq!(expose.process("50".into()), type_err);
+            assert_eq!(expose.process(true.into()), type_err);
+            assert_eq!(expose.process(vec![10].into()), type_err);
+        }
 
-        let expose = NumericBuilder::default()
-            .value_min(Some(10.0))
-            .value_max(Some(100.0))
-            .build()
-            .unwrap();
-        assert_eq!(
-            expose.process(0.into()),
-            Err(InvalidValue::new("Must be between 10 and 100 (inclusive)."))
-        );
-        assert_roundtrip!(expose, 50.into());
+        #[test]
+        fn min() {
+            let expose = NumericBuilder::default()
+                .value_min(Some(10.0))
+                .build()
+                .unwrap();
+            assert_eq!(
+                expose.process(0.into()),
+                Err(InvalidValue::new("Must be at least 10."))
+            );
+            assert_roundtrip!(expose, 50.into());
+        }
 
-        let expose = NumericBuilder::default()
-            .value_min(Some(1.0))
-            .value_step(Some(2.0))
-            .build()
-            .unwrap();
-        assert_eq!(
-            expose.process(0.into()),
-            Err(InvalidValue::new("Must be at least 1."))
-        );
-        assert_eq!(
-            expose.process(2.into()),
-            Err(InvalidValue::new(
-                "Must be 1 plus any number of steps of 2 (e.g. 3, 5, but not 4)."
-            ))
-        );
-        assert_roundtrip!(expose, 13.into());
+        #[test]
+        fn max() {
+            let expose = NumericBuilder::default()
+                .value_max(Some(10.0))
+                .build()
+                .unwrap();
+            assert_roundtrip!(expose, 0.into());
+            assert_eq!(
+                expose.process(50.into()),
+                Err(InvalidValue::new("Must be at most 10."))
+            );
+        }
 
-        let expose = NumericBuilder::default()
-            .presets(vec![
-                PresetBuilder::default()
-                    .name("default".to_owned())
-                    .value(25.0)
-                    .build()
-                    .unwrap(),
-                PresetBuilder::default()
-                    .name("previous".to_owned())
-                    .value(-1.0)
-                    .build()
-                    .unwrap(),
-            ])
-            .build()
-            .unwrap();
-        assert_roundtrip!(expose, 0.into());
-        assert_roundtrip!(expose, 25.into());
-        assert_eq!(expose.process("default".into()), Ok((25.0).into()));
-        assert_eq!(expose.process("previous".into()), Ok((-1.0).into()));
-        assert_eq!(
-            expose.process("invalid".into()),
-            Err(InvalidValue::new(
-                r#"Must be a number or one of the presets: ["default","previous"]."#
-            ))
-        );
-        assert_eq!(
-            expose.process(true.into()),
-            Err(InvalidValue::new(
-                r#"Must be a number or one of the presets: ["default","previous"]."#
-            ))
-        );
+        #[test]
+        fn min_max() {
+            let expose = NumericBuilder::default()
+                .value_min(Some(10.0))
+                .value_max(Some(100.0))
+                .build()
+                .unwrap();
+            assert_eq!(
+                expose.process(0.into()),
+                Err(InvalidValue::new("Must be between 10 and 100 (inclusive)."))
+            );
+            assert_roundtrip!(expose, 50.into());
+        }
+
+        #[test]
+        fn step() {
+            let expose = NumericBuilder::default()
+                .value_min(Some(1.0))
+                .value_step(Some(2.0))
+                .build()
+                .unwrap();
+            assert_eq!(
+                expose.process(0.into()),
+                Err(InvalidValue::new("Must be at least 1."))
+            );
+            assert_eq!(
+                expose.process(2.into()),
+                Err(InvalidValue::new(
+                    "Must be 1 plus any number of steps of 2 (e.g. 3, 5, but not 4)."
+                ))
+            );
+            assert_roundtrip!(expose, 13.into());
+        }
+
+        #[test]
+        fn presets() {
+            let expose = NumericBuilder::default()
+                .presets(vec![
+                    PresetBuilder::default()
+                        .name("default".to_owned())
+                        .value(25.0)
+                        .build()
+                        .unwrap(),
+                    PresetBuilder::default()
+                        .name("previous".to_owned())
+                        .value(-1.0)
+                        .build()
+                        .unwrap(),
+                ])
+                .build()
+                .unwrap();
+            assert_roundtrip!(expose, 0.into());
+            assert_roundtrip!(expose, 25.into());
+            assert_eq!(expose.process("default".into()), Ok((25.0).into()));
+            assert_eq!(expose.process("previous".into()), Ok((-1.0).into()));
+            assert_eq!(
+                expose.process("invalid".into()),
+                Err(InvalidValue::new(
+                    r#"Must be a number or one of the presets: ["default","previous"]."#
+                ))
+            );
+            assert_eq!(
+                expose.process(true.into()),
+                Err(InvalidValue::new(
+                    r#"Must be a number or one of the presets: ["default","previous"]."#
+                ))
+            );
+        }
     }
 
     #[test]
@@ -775,79 +812,97 @@ mod tests {
         assert_eq!(expose.process(true.into()), type_err);
     }
 
-    #[test]
-    fn process_list() {
-        let expose = List::default();
-        assert_roundtrip!(expose, vec!["HELLO", "WORLD"].into());
-        assert_eq!(
-            expose.process(Value::Array(vec!["HELLO".into(), 10.into()])),
-            Err(InvalidValue {
-                message: "Must be a string.".to_owned(),
-                path: "[1]".to_owned(),
-            }),
-        );
+    mod process_list {
+        use pretty_assertions::assert_eq;
 
-        let expose = ListBuilder::default()
-            .item_type(Box::new(ListItem::Numeric(Numeric::default())))
-            .build()
-            .unwrap();
-        assert_roundtrip!(expose, vec![10, 20].into());
-        assert_eq!(
-            expose.process(Value::Array(vec!["HELLO".into(), 10.into()])),
-            Err(InvalidValue {
-                message: "Must be a number.".to_owned(),
-                path: "[0]".to_owned(),
-            }),
-        );
+        use super::*;
 
-        let expose = ListBuilder::default()
-            .length_min(Some(1))
-            .item_type(Box::new(ListItem::Numeric(Numeric::default())))
-            .build()
-            .unwrap();
-        assert_roundtrip!(expose, vec![1].into());
-        assert_roundtrip!(expose, vec![1, 2, 3].into());
-        assert_eq!(
-            expose.process(Vec::<f64>::new().into()),
-            Err(InvalidValue::new("Must have at least 1 item(s).")),
-        );
+        #[test]
+        fn string() {
+            let expose = List::default();
+            assert_roundtrip!(expose, vec!["HELLO", "WORLD"].into());
+            assert_eq!(
+                expose.process(Value::Array(vec!["HELLO".into(), 10.into()])),
+                Err(InvalidValue {
+                    message: "Must be a string.".to_owned(),
+                    path: "[1]".to_owned(),
+                }),
+            );
+        }
 
-        let expose = ListBuilder::default()
-            .length_max(Some(2))
-            .item_type(Box::new(ListItem::Numeric(Numeric::default())))
-            .build()
-            .unwrap();
-        assert_roundtrip!(expose, vec![1].into());
-        assert_roundtrip!(expose, vec![1, 2].into());
-        assert_eq!(
-            expose.process(vec![1, 2, 3].into()),
-            Err(InvalidValue::new("Must have at most 2 item(s).")),
-        );
+        #[test]
+        fn numeric() {
+            let expose = ListBuilder::default()
+                .item_type(Box::new(ListItem::Numeric(Numeric::default())))
+                .build()
+                .unwrap();
+            assert_roundtrip!(expose, vec![10, 20].into());
+            assert_eq!(
+                expose.process(Value::Array(vec!["HELLO".into(), 10.into()])),
+                Err(InvalidValue {
+                    message: "Must be a number.".to_owned(),
+                    path: "[0]".to_owned(),
+                }),
+            );
+        }
 
-        let expose = ListBuilder::default()
-            .length_min(Some(1))
-            .length_max(Some(3))
-            .item_type(Box::new(ListItem::Numeric(Numeric::default())))
-            .build()
-            .unwrap();
-        assert_roundtrip!(expose, vec![1].into());
-        assert_roundtrip!(expose, vec![1, 2].into());
-        assert_eq!(
-            expose.process(Vec::<f64>::new().into()),
-            Err(InvalidValue::new(
-                "Must have between 1 and 3 items (inclusive)."
-            )),
-        );
-        assert_eq!(
-            expose.process(vec![1, 2, 3, 4].into()),
-            Err(InvalidValue::new(
-                "Must have between 1 and 3 items (inclusive)."
-            )),
-        );
+        #[test]
+        fn min() {
+            let expose = ListBuilder::default()
+                .length_min(Some(1))
+                .item_type(Box::new(ListItem::Numeric(Numeric::default())))
+                .build()
+                .unwrap();
+            assert_roundtrip!(expose, vec![1].into());
+            assert_roundtrip!(expose, vec![1, 2, 3].into());
+            assert_eq!(
+                expose.process(Vec::<f64>::new().into()),
+                Err(InvalidValue::new("Must have at least 1 item(s).")),
+            );
+        }
+
+        #[test]
+        fn max() {
+            let expose = ListBuilder::default()
+                .length_max(Some(2))
+                .item_type(Box::new(ListItem::Numeric(Numeric::default())))
+                .build()
+                .unwrap();
+            assert_roundtrip!(expose, vec![1].into());
+            assert_roundtrip!(expose, vec![1, 2].into());
+            assert_eq!(
+                expose.process(vec![1, 2, 3].into()),
+                Err(InvalidValue::new("Must have at most 2 item(s).")),
+            );
+        }
+
+        #[test]
+        fn min_max() {
+            let expose = ListBuilder::default()
+                .length_min(Some(1))
+                .length_max(Some(3))
+                .item_type(Box::new(ListItem::Numeric(Numeric::default())))
+                .build()
+                .unwrap();
+            assert_roundtrip!(expose, vec![1].into());
+            assert_roundtrip!(expose, vec![1, 2].into());
+            assert_eq!(
+                expose.process(Vec::<f64>::new().into()),
+                Err(InvalidValue::new(
+                    "Must have between 1 and 3 items (inclusive)."
+                )),
+            );
+            assert_eq!(
+                expose.process(vec![1, 2, 3, 4].into()),
+                Err(InvalidValue::new(
+                    "Must have between 1 and 3 items (inclusive)."
+                )),
+            );
+        }
     }
 
     #[test]
-    fn process_object() {
+    fn process_bag() {
         let expose = Bag::default();
 
         assert_roundtrip!(
@@ -863,187 +918,198 @@ mod tests {
         assert_eq!(expose.process(true.into()), type_err);
     }
 
-    #[test]
-    fn process_device_capabilities() {
-        let expose = DeviceCapabilitiesSchema::from(vec![
-            Schema::Numeric(WithProperty {
-                property: "num".to_owned(),
-                type_: NumericBuilder::default()
-                    .presets(vec![PresetBuilder::default()
-                        .name("default".to_owned())
-                        .value(25.0)
+    mod process_capabilities {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        static EXPOSE: Lazy<DeviceCapabilitiesSchema> = Lazy::new(|| {
+            DeviceCapabilitiesSchema::from(vec![
+                Schema::Numeric(WithProperty {
+                    property: "num".to_owned(),
+                    type_: NumericBuilder::default()
+                        .presets(vec![PresetBuilder::default()
+                            .name("default".to_owned())
+                            .value(25.0)
+                            .build()
+                            .unwrap()])
                         .build()
-                        .unwrap()])
-                    .build()
-                    .unwrap(),
-            }),
-            Schema::Text(WithProperty {
-                property: "text".to_owned(),
-                type_: Text::default(),
-            }),
-            Schema::Composite(WithProperty {
-                property: "nested".to_owned(),
-                type_: CompositeBuilder::default()
-                    .features(vec![Schema::Binary(WithProperty {
-                        property: "binary".to_owned(),
-                        type_: BinaryBuilder::default()
-                            .value_on(true.into())
-                            .value_off(false.into())
-                            .build()
-                            .unwrap(),
-                    })])
-                    .build()
-                    .unwrap(),
-            }),
-            Schema::Specific(
-                SpecificBuilder::default()
-                    .features(vec![Schema::Enum(WithProperty {
-                        property: "enum".to_owned(),
-                        type_: EnumBuilder::default()
-                            .values(vec!["RED".into(), "GREEN".into(), "BLUE".into()])
-                            .build()
-                            .unwrap(),
-                    })])
-                    .build()
-                    .unwrap(),
-            ),
-        ]);
+                        .unwrap(),
+                }),
+                Schema::Text(WithProperty {
+                    property: "text".to_owned(),
+                    type_: Text::default(),
+                }),
+                Schema::Composite(WithProperty {
+                    property: "nested".to_owned(),
+                    type_: CompositeBuilder::default()
+                        .features(vec![Schema::Binary(WithProperty {
+                            property: "binary".to_owned(),
+                            type_: BinaryBuilder::default()
+                                .value_on(true.into())
+                                .value_off(false.into())
+                                .build()
+                                .unwrap(),
+                        })])
+                        .build()
+                        .unwrap(),
+                }),
+                Schema::Specific(
+                    SpecificBuilder::default()
+                        .features(vec![Schema::Enum(WithProperty {
+                            property: "enum".to_owned(),
+                            type_: EnumBuilder::default()
+                                .values(vec!["RED".into(), "GREEN".into(), "BLUE".into()])
+                                .build()
+                                .unwrap(),
+                        })])
+                        .build()
+                        .unwrap(),
+                ),
+                Schema::Bag(WithProperty {
+                    property: "bag".to_owned(),
+                    type_: Bag::default(),
+                }),
+            ])
+        });
 
-        let type_err = Err(InvalidValue::new("Must be an object."));
-        assert_eq!(expose.process(10.into()), type_err);
-        assert_eq!(expose.process(true.into()), type_err);
-        assert_eq!(expose.process("HELLO".into()), type_err);
+        #[test]
+        fn basic() {
+            assert_roundtrip!(
+                EXPOSE,
+                json!({
+                    "num": 15,
+                    "text": "HELLO",
+                    "nested": {
+                        "binary": false,
+                    },
+                    "enum": "BLUE",
+                }),
+            );
 
-        // Valid.
-        assert_roundtrip!(
-            expose,
-            json!({
-                "num": 15,
-                "text": "HELLO",
-                "nested": {
-                    "binary": false,
-                },
-                "enum": "BLUE",
-            }),
-        );
+            let type_err = Err(InvalidValue::new("Must be an object."));
+            assert_eq!(EXPOSE.process(10.into()), type_err);
+            assert_eq!(EXPOSE.process(true.into()), type_err);
+            assert_eq!(EXPOSE.process("HELLO".into()), type_err);
+        }
 
-        // Valid but transformed in some manner.
-        assert_eq!(
-            expose.process(json!({
-                "text": "HELLO",
-                "num": "default",
-                "enum": "BLUE",
-            })),
-            Ok(json!({
-                "text": "HELLO",
-                "num": 25.0,
-                "enum": "BLUE",
-            })),
-        );
+        #[test]
+        fn error_path_toplevel() {
+            assert_eq!(
+                EXPOSE.process(json!({
+                    "num": "five",
+                })),
+                Err(InvalidValue {
+                    path: ".num".to_owned(),
+                    message: r#"Must be a number or one of the presets: ["default"]."#.to_owned(),
+                }),
+            );
+        }
 
-        // Top-level invalid.
-        assert_eq!(
-            expose.process(json!({
-                "num": "five",
-            })),
-            Err(InvalidValue {
-                path: ".num".to_owned(),
-                message: r#"Must be a number or one of the presets: ["default"]."#.to_owned(),
-            }),
-        );
+        #[test]
+        fn error_path_nested_capability() {
+            assert_eq!(
+                EXPOSE.process(json!({
+                    "nested": {
+                        "binary": "maybe",
+                    },
+                })),
+                Err(InvalidValue {
+                    path: ".nested.binary".to_owned(),
+                    message: "Must be either true or false.".to_owned(),
+                }),
+            );
+        }
 
-        // Nested invalid.
-        assert_eq!(
-            expose.process(json!({
-                "nested": {
-                    "binary": "maybe",
-                },
-            })),
-            Err(InvalidValue {
-                path: ".nested.binary".to_owned(),
-                message: "Must be either true or false.".to_owned(),
-            }),
-        );
+        #[test]
+        fn error_path_nested_specific() {
+            assert_eq!(
+                EXPOSE.process(json!({
+                    "enum": "CYAN",
+                })),
+                Err(InvalidValue {
+                    path: ".enum".to_owned(),
+                    message: r#"Must be one of ["RED","GREEN","BLUE"]."#.to_owned(),
+                }),
+            );
+        }
 
-        // Invalid inside specific.
-        assert_eq!(
-            expose.process(json!({
-                "enum": "CYAN",
-            })),
-            Err(InvalidValue {
-                path: ".enum".to_owned(),
-                message: r#"Must be one of ["RED","GREEN","BLUE"]."#.to_owned(),
-            }),
-        );
-    }
+        #[test]
+        fn transform() {
+            assert_eq!(
+                EXPOSE.process(json!({
+                    "text": "HELLO",
+                    "num": "default",
+                    "enum": "BLUE",
+                })),
+                Ok(json!({
+                    "text": "HELLO",
+                    "num": 25.0,
+                    "enum": "BLUE",
+                })),
+            );
+        }
 
-    #[test]
-    fn process_device_capabilities_reject_unknown() {
-        let expose = DeviceCapabilitiesSchema::from(vec![
-            Schema::Composite(WithProperty {
-                property: "nested".to_owned(),
-                type_: Composite::default(),
-            }),
-            Schema::Bag(WithProperty {
-                property: "bag".to_owned(),
-                type_: Bag::default(),
-            }),
-        ]);
-
-        // Unknown top-level property.
-        assert_eq!(
-            expose.process(json!({
-                "unknown": 10,
-            })),
-            Err(InvalidValue {
-                path: ".unknown".to_owned(),
-                message: "Unknown property.".to_owned(),
-            }),
-        );
-
-        // Unknown nested property.
-        assert_eq!(
-            expose.process(json!({
-                "nested": {
+        #[test]
+        fn unknown_toplevel() {
+            assert_eq!(
+                EXPOSE.process(json!({
                     "unknown": 10,
-                },
-            })),
-            Err(InvalidValue {
-                path: ".nested.unknown".to_owned(),
-                message: "Unknown property.".to_owned(),
-            }),
-        );
+                })),
+                Err(InvalidValue {
+                    path: ".unknown".to_owned(),
+                    message: "Unknown property.".to_owned(),
+                }),
+            );
+        }
 
-        // Accept inside bag.
-        assert_roundtrip!(
-            expose,
-            json!({
-                "bag": {
-                    "foo": 10,
-                },
-            })
-        );
-    }
+        #[test]
+        fn unknown_nested() {
+            assert_eq!(
+                EXPOSE.process(json!({
+                    "nested": {
+                        "unknown": 10,
+                    },
+                })),
+                Err(InvalidValue {
+                    path: ".nested.unknown".to_owned(),
+                    message: "Unknown property.".to_owned(),
+                }),
+            );
+        }
 
-    #[test]
-    fn process_device_options_common() {
-        let expose = DeviceOptionsSchema::from(vec![]);
+        #[test]
+        fn unknown_nested_bag() {
+            assert_roundtrip!(
+                EXPOSE,
+                json!({
+                    "bag": {
+                        "foo": 10,
+                    },
+                })
+            );
+        }
 
-        assert_roundtrip!(
-            expose,
-            json!({
-                "description": "Example",
-                "retain": true,
-            })
-        );
-        assert_eq!(
-            expose.process(json!({
-                "unknown": 10,
-            })),
-            Err(InvalidValue {
-                path: ".unknown".to_owned(),
-                message: "Unknown property.".to_owned(),
-            })
-        );
+        #[test]
+        fn device_options_common() {
+            let expose = DeviceOptionsSchema::from(vec![]);
+
+            assert_roundtrip!(
+                expose,
+                json!({
+                    "description": "Example",
+                    "retain": true,
+                })
+            );
+            assert_eq!(
+                expose.process(json!({
+                    "unknown": 10,
+                })),
+                Err(InvalidValue {
+                    path: ".unknown".to_owned(),
+                    message: "Unknown property.".to_owned(),
+                })
+            );
+        }
     }
 }
