@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use futures::Future;
 use kube::{runtime::controller::Action, ResourceExt};
 use serde_json::{Map, Value};
-use tokio::sync::Mutex;
 
 use crate::{
     crds::Device,
@@ -62,7 +61,7 @@ async fn do_sync<F>(
     field_path: &str,
     wanted: &Map<String, Value>,
     actual: &Map<String, Value>,
-    mut apply: impl FnMut() -> F,
+    apply: impl FnOnce() -> F,
 ) -> Result<(), EmittedError>
 where
     F: Future<Output = Result<Map<String, Value>, Error>> + Send,
@@ -228,21 +227,13 @@ impl Device {
             wanted_options.entry(key.clone()).or_insert(Value::Null);
         }
 
-        let options_manager = Arc::new(Mutex::new(options_manager));
         do_sync(
             eventmanager,
             "option",
             "spec.options",
             &wanted_options,
             &current_options,
-            || {
-                let options_manager = options_manager.clone();
-                let wanted_options = wanted_options.clone();
-                async move {
-                    let mut options_manager = options_manager.lock().await;
-                    options_manager.set(&wanted_options).await
-                }
-            },
+            || options_manager.set(&wanted_options),
         )
         .await?;
         Ok(())
@@ -267,21 +258,13 @@ impl Device {
             .emit_event(eventmanager, "spec.friendly_name")
             .await?;
 
-        let capabilities_manager = Arc::new(Mutex::new(capabilities_manager));
         do_sync(
             eventmanager,
             "capability",
             "spec.capabilities",
             wanted_capabilities,
             &current_capabilities,
-            || {
-                let capabilities_manager = capabilities_manager.clone();
-                let wanted_capabilities = wanted_capabilities.clone();
-                async move {
-                    let mut capabilities_manager = capabilities_manager.lock().await;
-                    capabilities_manager.set(wanted_capabilities.into()).await
-                }
-            },
+            || capabilities_manager.set(wanted_capabilities.clone().into()),
         )
         .await?;
         Ok(())
