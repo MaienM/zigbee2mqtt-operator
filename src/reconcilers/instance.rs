@@ -1,18 +1,26 @@
 //! Reconcile logic for [`Instance`].
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    fmt::{Debug, Display},
+    hash::Hash,
+    sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
-use kube::{api::ListParams, runtime::controller::Action, Api, ResourceExt};
+use k8s_openapi::NamespaceResourceScope;
+use kube::{api::ListParams, runtime::controller::Action, Api, Resource, ResourceExt};
+use serde::Deserialize;
 use tokio::{spawn, time::timeout};
 use tracing::{error_span, info_span};
 
 use crate::{
     background_task,
-    crds::{Device, Instance, InstanceHandleUnmanaged},
+    crds::{Device, Group, Instance, InstanceHandleUnmanaged, Instanced},
     error::{EmittableResult, EmittableResultFuture, Error},
     event_manager::{EventManager, EventType},
-    mqtt::{BridgeDeviceType, ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
+    mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
     status_manager::StatusManager,
     Context, EmittedError, EventCore, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL,
 };
@@ -23,7 +31,9 @@ impl Reconciler for Instance {
         let eventmanager = EventManager::new(ctx.client.clone(), self);
 
         let manager = self.setup_manager(&ctx, &eventmanager).await?;
-        self.find_unmanaged_devices(&ctx, &manager, &eventmanager)
+        self.process_unmanaged::<Device>(&ctx, &manager, &eventmanager)
+            .await?;
+        self.process_unmanaged::<Group>(&ctx, &manager, &eventmanager)
             .await?;
         self.restart_if_needed(&manager, &eventmanager).await?;
 
@@ -174,59 +184,76 @@ impl Instance {
         Ok(manager)
     }
 
-    async fn find_unmanaged_devices(
+    async fn process_unmanaged<T>(
         &self,
         ctx: &Arc<Context>,
         manager: &Arc<Manager>,
         eventmanager: &EventManager,
-    ) -> Result<(), EmittedError> {
-        if self.spec.unmanaged_devices == InstanceHandleUnmanaged::Ignore {
+    ) -> Result<(), EmittedError>
+    where
+        T: ManagedResource,
+        <T as ManagedResource>::Resource: Clone + Debug + for<'de> Deserialize<'de>,
+        <<T as ManagedResource>::Resource as Resource>::DynamicType: Default,
+    {
+        let dt = <T::Resource as Resource>::DynamicType::default();
+
+        let mode = T::get_mode(self);
+        if mode == &InstanceHandleUnmanaged::Ignore {
             return Ok(());
         }
 
-        let from_k8s = async {
-            let api = Api::<Device>::namespaced(ctx.client.clone(), &self.namespace().unwrap());
+        let kubernetes_identifiers = async {
+            let api =
+                Api::<T::Resource>::namespaced(ctx.client.clone(), &self.namespace().unwrap());
             let lp = ListParams::default();
-            api.list(&lp).await.map_err(|err| {
-                Error::ActionFailed(
-                    "failed to get list of devices".to_owned(),
-                    Some(Arc::new(Box::new(err))),
-                )
-            })
+            Ok(api
+                .list(&lp)
+                .await
+                .map_err(|err| {
+                    Error::ActionFailed(
+                        format!("failed to get list of {}", T::Resource::plural(&dt)),
+                        Some(Arc::new(Box::new(err))),
+                    )
+                })?
+                .iter()
+                .filter(|r| r.get_instance_fullname() == self.full_name())
+                .filter_map(T::kubernetes_resource_identifier)
+                .collect::<HashSet<_>>())
         }
-        .emit_event(eventmanager, "")
+        .emit_event_nopath(eventmanager)
         .await?;
-        let from_k8s_addresses = from_k8s
-            .iter()
-            .filter(|d| d.spec.instance == self.name_any())
-            .map(|d| &d.spec.ieee_address)
-            .collect::<HashSet<_>>();
 
-        let from_z2m = manager
-            .get_bridge_device_tracker()
-            .emit_event_nopath(eventmanager)
-            .await?
-            .get_all()
+        let zigbee2mqtt_resources = T::get_zigbee2mqtt(manager)
             .emit_event_nopath(eventmanager)
             .await?;
 
-        for bridge_device in &from_z2m {
-            if bridge_device.type_ == BridgeDeviceType::Coordinator {
+        for (id, name) in zigbee2mqtt_resources {
+            if kubernetes_identifiers.contains(&id) {
                 continue;
             }
-            if !from_k8s_addresses.contains(&bridge_device.ieee_address) {
-                eventmanager
-                    .publish(EventCore {
-                        action: "Reconciling".to_string(),
-                        note: Some(format!(
-                            "Zigbee2MQTT has device {address} which is not defined in K8s.",
-                            address = bridge_device.ieee_address
-                        )),
-                        reason: "Created".to_string(),
-                        type_: EventType::Warning,
-                        field_path: None,
-                    })
-                    .await;
+
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(format!(
+                        "Zigbee2MQTT has {kind} {id} (name '{name}') which is not defined in K8s{extra}.",
+                        kind = T::Resource::kind(&dt),
+                        extra = if mode == &InstanceHandleUnmanaged::Delete {
+                            ", deleting"
+                        } else {
+                            ""
+                        },
+                    )),
+                    reason: "Created".to_string(),
+                    type_: EventType::Warning,
+                    field_path: None,
+                })
+                .await;
+
+            if mode == &InstanceHandleUnmanaged::Delete {
+                T::delete_zigbee2mqtt(manager, id)
+                    .emit_event_nopath(eventmanager)
+                    .await?;
             }
         }
 
@@ -262,5 +289,93 @@ impl Instance {
                 .await?;
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+trait ManagedResource {
+    type Resource: Resource<Scope = NamespaceResourceScope> + Instanced;
+    type Identifier: PartialEq + Eq + Hash + Display + Send;
+
+    /// Get the management mode for the resource for the given instance.
+    fn get_mode(instance: &Instance) -> &InstanceHandleUnmanaged;
+
+    /// Get the identifier of a managed Kubernetes resource.
+    fn kubernetes_resource_identifier(resource: &Self::Resource) -> Option<Self::Identifier>;
+
+    /// Get the identifiers & names of the existing Zigbee2MQTT resources.
+    async fn get_zigbee2mqtt(
+        manager: &Arc<Manager>,
+    ) -> Result<Vec<(Self::Identifier, String)>, Error>;
+
+    /// Delete the Zigbee2MQTT instance with the given identifier.
+    async fn delete_zigbee2mqtt(manager: &Arc<Manager>, id: Self::Identifier) -> Result<(), Error>;
+}
+
+#[async_trait]
+impl ManagedResource for Device {
+    type Resource = Self;
+    type Identifier = String;
+
+    fn get_mode(instance: &Instance) -> &InstanceHandleUnmanaged {
+        &instance.spec.unmanaged_devices
+    }
+
+    fn kubernetes_resource_identifier(resource: &Self::Resource) -> Option<Self::Identifier> {
+        Some(resource.spec.ieee_address.clone())
+    }
+
+    async fn get_zigbee2mqtt(
+        manager: &Arc<Manager>,
+    ) -> Result<Vec<(Self::Identifier, String)>, Error> {
+        Ok(manager
+            .get_bridge_device_tracker()
+            .await?
+            .get_all()
+            .await?
+            .into_iter()
+            .map(|d| (d.ieee_address, d.friendly_name))
+            .collect())
+    }
+
+    async fn delete_zigbee2mqtt(
+        _manager: &Arc<Manager>,
+        _id: Self::Identifier,
+    ) -> Result<(), Error> {
+        Err(Error::ActionFailed(
+            "deleting of unmanaged devices in Zigbee2MQTT is not supported".to_owned(),
+            None,
+        ))
+    }
+}
+
+#[async_trait]
+impl ManagedResource for Group {
+    type Resource = Self;
+    type Identifier = usize;
+
+    fn get_mode(instance: &Instance) -> &InstanceHandleUnmanaged {
+        &instance.spec.unmanaged_groups
+    }
+
+    fn kubernetes_resource_identifier(resource: &Self::Resource) -> Option<Self::Identifier> {
+        resource.status.as_ref().and_then(|s| s.id)
+    }
+
+    async fn get_zigbee2mqtt(
+        manager: &Arc<Manager>,
+    ) -> Result<Vec<(Self::Identifier, String)>, Error> {
+        Ok(manager
+            .get_bridge_group_tracker()
+            .await?
+            .get_all()
+            .await?
+            .into_iter()
+            .map(|d| (d.id, d.friendly_name))
+            .collect())
+    }
+
+    async fn delete_zigbee2mqtt(manager: &Arc<Manager>, id: Self::Identifier) -> Result<(), Error> {
+        manager.delete_group(id).await
     }
 }

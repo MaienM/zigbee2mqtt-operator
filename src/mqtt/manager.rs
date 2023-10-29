@@ -763,7 +763,9 @@ impl Manager {
         DeviceCapabilitiesManager::new(self.clone(), ieee_address, friendly_name).await
     }
 
-    pub async fn get_group_tracker(self: &Arc<Self>) -> Result<Arc<BridgeGroupsTracker>, Error> {
+    pub async fn get_bridge_group_tracker(
+        self: &Arc<Self>,
+    ) -> Result<Arc<BridgeGroupsTracker>, Error> {
         self.bridge_groups_tracker
             .get_or_init(|| BridgeGroupsTracker::new(self.clone()))
             .await

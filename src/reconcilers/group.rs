@@ -117,7 +117,7 @@ impl Group {
     ) -> Result<BridgeGroup, EmittedError> {
         let mut group: Option<BridgeGroup> = None;
         let tracker = manager
-            .get_group_tracker()
+            .get_bridge_group_tracker()
             .emit_event_nopath(eventmanager)
             .await?;
         if let Some((field_path, id)) = self.get_id() {

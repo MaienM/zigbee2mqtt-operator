@@ -21,8 +21,12 @@ impl TopicTrackerType for BridgeGroupsTracker {
     type Payload = BridgeGroupsPayload;
 }
 impl BridgeGroupsTracker {
+    pub async fn get_all(&self) -> Result<Vec<BridgeGroup>, Error> {
+        self.0.get().await
+    }
+
     pub async fn get_by_id(&self, id: usize) -> Result<Option<BridgeGroup>, Error> {
-        Ok(self.0.get().await?.into_iter().find(|g| g.id == id))
+        Ok(self.get_all().await?.into_iter().find(|g| g.id == id))
     }
 
     pub async fn get_by_friendly_name(
@@ -30,8 +34,7 @@ impl BridgeGroupsTracker {
         friendly_name: &str,
     ) -> Result<Option<BridgeGroup>, Error> {
         Ok(self
-            .0
-            .get()
+            .get_all()
             .await?
             .into_iter()
             .find(|g| g.friendly_name == friendly_name))

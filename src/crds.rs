@@ -5,7 +5,11 @@ use std::{str::from_utf8, sync::Arc};
 use garde::Validate;
 use k8s_openapi::{api::core::v1::Secret, NamespaceResourceScope};
 use kube::{Api, Client, CustomResource, Resource, ResourceExt};
-use schemars::JsonSchema;
+use schemars::{
+    gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject, SingleOrVec},
+    JsonSchema,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -44,8 +48,14 @@ pub struct InstanceSpec {
 
     /// What to do with devices that exist in Zigbee2MQTT but not in K8s.
     #[serde(default)]
+    #[schemars(schema_with = "instance_handle_unmanaged_nodelete")]
     #[garde(skip)]
     pub unmanaged_devices: InstanceHandleUnmanaged,
+
+    /// What to do with groups that exist in Zigbee2MQTT but not in K8s.
+    #[serde(default)]
+    #[garde(skip)]
+    pub unmanaged_groups: InstanceHandleUnmanaged,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[allow(missing_docs)]
@@ -77,6 +87,19 @@ pub enum InstanceHandleUnmanaged {
     /// Log unmanaged resource.
     #[default]
     Log,
+
+    /// Delete unmanaged resource.
+    Delete,
+}
+fn instance_handle_unmanaged_nodelete(_: &mut SchemaGenerator) -> Schema {
+    Schema::Object(SchemaObject {
+        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+        enum_values: Some(vec![
+            serde_json::to_value(InstanceHandleUnmanaged::Ignore).unwrap(),
+            serde_json::to_value(InstanceHandleUnmanaged::Log).unwrap(),
+        ]),
+        ..SchemaObject::default()
+    })
 }
 fn default_instance_port() -> u16 {
     1883
@@ -86,6 +109,11 @@ fn default_instance_base_topic() -> String {
 }
 fn default_instance() -> String {
     "default".to_string()
+}
+/// Trait for CRDs that belong to a specific [`Instance`].
+pub trait Instanced {
+    /// Get the name of the instance this resource belongs to, in the format of [`ResourceLocalExt::full_name`].
+    fn get_instance_fullname(&self) -> String;
 }
 
 ///
@@ -144,6 +172,11 @@ pub struct DeviceStatus {
     /// Whether the device is in the desired state.
     pub synced: Option<bool>,
 }
+impl Instanced for Device {
+    fn get_instance_fullname(&self) -> String {
+        format!("{}/{}", self.namespace().unwrap(), self.spec.instance)
+    }
+}
 
 ///
 /// A Zigbee2MQTT group.
@@ -187,6 +220,11 @@ pub struct GroupStatus {
 
     /// The group's ID.
     pub id: Option<usize>,
+}
+impl Instanced for Group {
+    fn get_instance_fullname(&self) -> String {
+        format!("{}/{}", self.namespace().unwrap(), self.spec.instance)
+    }
 }
 
 ///
