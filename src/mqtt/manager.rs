@@ -17,12 +17,11 @@ use veil::Redact;
 
 use super::{
     handlers::{
-        BridgeDevice, BridgeDevicesTracker, BridgeGroup, BridgeGroupsTracker, BridgeInfoTracker,
-        DeviceCapabilitiesManager, DeviceOptionsManager, DeviceRenamer, GroupCreator, GroupDeletor,
-        GroupRenamer, HealthChecker, Restarter,
+        BridgeDevicesTracker, BridgeGroupsTracker, BridgeInfoTracker, DeviceCapabilitiesManager,
+        DeviceOptionsManager, DeviceRenamer, GroupCreator, GroupDeletor, GroupRenamer,
+        HealthChecker, Restarter,
     },
     subscription::TopicSubscription,
-    BridgeInfoPayload,
 };
 use crate::{
     background_task,
@@ -244,19 +243,19 @@ async fn client_disconnect_or_warn(client: &MqttClient, id: &String) {
     };
 }
 
-struct OnceCellMutex<T>(OnceCell<Result<Arc<Mutex<T>>, Error>>);
-impl<T> OnceCellMutex<T> {
+struct OnceCellMaybe<T>(OnceCell<Result<Arc<T>, Error>>);
+impl<T> OnceCellMaybe<T> {
     fn new() -> Self {
         Self(OnceCell::new())
     }
 
-    pub async fn get_or_init<F, Fut>(&self, f: F) -> Result<Arc<Mutex<T>>, Error>
+    pub async fn get_or_init<F, Fut>(&self, f: F) -> Result<Arc<T>, Error>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T, Error>>,
     {
         self.0
-            .get_or_init(|| async { Ok(Arc::new(Mutex::new(f().await?))) })
+            .get_or_init(|| async { Ok(Arc::new(f().await?)) })
             .await
             .clone()
     }
@@ -274,9 +273,9 @@ pub struct Manager {
     status_sender: Mutex<mpsc::UnboundedSender<Status>>,
     subscriptions: Mutex<HashMap<String, Arc<Mutex<broadcast::Sender<Publish>>>>>,
     subscription_lock: LockableNotify,
-    bridge_info_tracker: OnceCellMutex<BridgeInfoTracker>,
-    bridge_devices_tracker: OnceCellMutex<BridgeDevicesTracker>,
-    bridge_groups_tracker: OnceCellMutex<BridgeGroupsTracker>,
+    bridge_info_tracker: OnceCellMaybe<BridgeInfoTracker>,
+    bridge_devices_tracker: OnceCellMaybe<BridgeDevicesTracker>,
+    bridge_groups_tracker: OnceCellMaybe<BridgeGroupsTracker>,
 }
 impl Manager {
     pub async fn new(
@@ -370,9 +369,9 @@ impl Manager {
             status_sender: Mutex::new(status_sender),
             subscriptions: Mutex::new(HashMap::new()),
             subscription_lock: LockableNotify::new(),
-            bridge_info_tracker: OnceCellMutex::new(),
-            bridge_devices_tracker: OnceCellMutex::new(),
-            bridge_groups_tracker: OnceCellMutex::new(),
+            bridge_info_tracker: OnceCellMaybe::new(),
+            bridge_devices_tracker: OnceCellMaybe::new(),
+            bridge_groups_tracker: OnceCellMaybe::new(),
         });
 
         // Start background tasks.
@@ -718,13 +717,11 @@ impl Manager {
             })
     }
 
-    pub async fn get_bridge_info(self: &Arc<Self>) -> Result<BridgeInfoPayload, Error> {
+    pub async fn get_bridge_info_tracker(
+        self: &Arc<Self>,
+    ) -> Result<Arc<BridgeInfoTracker>, Error> {
         self.bridge_info_tracker
             .get_or_init(|| BridgeInfoTracker::new(self.clone()))
-            .await?
-            .lock()
-            .await
-            .get()
             .await
     }
 
@@ -732,16 +729,11 @@ impl Manager {
         Restarter::new(self.clone()).await?.run().await
     }
 
-    pub async fn get_bridge_device_definition(
+    pub async fn get_bridge_device_tracker(
         self: &Arc<Self>,
-        ieee_address: &str,
-    ) -> Result<BridgeDevice, Error> {
+    ) -> Result<Arc<BridgeDevicesTracker>, Error> {
         self.bridge_devices_tracker
             .get_or_init(|| BridgeDevicesTracker::new(self.clone()))
-            .await?
-            .lock()
-            .await
-            .get(ieee_address)
             .await
     }
 
@@ -771,29 +763,9 @@ impl Manager {
         DeviceCapabilitiesManager::new(self.clone(), ieee_address, friendly_name).await
     }
 
-    pub async fn get_group_by_id(
-        self: &Arc<Self>,
-        id: usize,
-    ) -> Result<Option<BridgeGroup>, Error> {
+    pub async fn get_group_tracker(self: &Arc<Self>) -> Result<Arc<BridgeGroupsTracker>, Error> {
         self.bridge_groups_tracker
             .get_or_init(|| BridgeGroupsTracker::new(self.clone()))
-            .await?
-            .lock()
-            .await
-            .get_by_id(id)
-            .await
-    }
-
-    pub async fn get_group_by_friendly_name(
-        self: &Arc<Self>,
-        friendly_name: &str,
-    ) -> Result<Option<BridgeGroup>, Error> {
-        self.bridge_groups_tracker
-            .get_or_init(|| BridgeGroupsTracker::new(self.clone()))
-            .await?
-            .lock()
-            .await
-            .get_by_friendly_name(friendly_name)
             .await
     }
 

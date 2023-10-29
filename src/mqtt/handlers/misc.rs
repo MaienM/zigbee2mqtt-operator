@@ -13,10 +13,10 @@ use crate::error::Error;
 //
 // Track bridge info topic.
 //
-pub struct BridgeInfoTracker(TopicTracker<Self>);
+pub struct BridgeInfoTracker(Arc<TopicTracker<Self>>);
 add_wrapper_new!(BridgeInfoTracker, TopicTracker);
 impl BridgeInfoTracker {
-    pub async fn get(&mut self) -> Result<BridgeInfoPayload, Error> {
+    pub async fn get(&self) -> Result<BridgeInfoPayload, Error> {
         self.0.get().await
     }
 }

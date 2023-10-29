@@ -14,19 +14,19 @@ use crate::error::Error;
 //
 // Track bridge group topic.
 //
-pub struct BridgeGroupsTracker(TopicTracker<Self>);
+pub struct BridgeGroupsTracker(Arc<TopicTracker<Self>>);
 add_wrapper_new!(BridgeGroupsTracker, TopicTracker);
 impl TopicTrackerType for BridgeGroupsTracker {
     const TOPIC: &'static str = "bridge/groups";
     type Payload = BridgeGroupsPayload;
 }
 impl BridgeGroupsTracker {
-    pub async fn get_by_id(&mut self, id: usize) -> Result<Option<BridgeGroup>, Error> {
+    pub async fn get_by_id(&self, id: usize) -> Result<Option<BridgeGroup>, Error> {
         Ok(self.0.get().await?.into_iter().find(|g| g.id == id))
     }
 
     pub async fn get_by_friendly_name(
-        &mut self,
+        &self,
         friendly_name: &str,
     ) -> Result<Option<BridgeGroup>, Error> {
         Ok(self

@@ -120,16 +120,21 @@ impl Group {
         eventmanager: &EventManager,
     ) -> Result<BridgeGroup, EmittedError> {
         let mut group: Option<BridgeGroup> = None;
+        let tracker = manager
+            .get_group_tracker()
+            .await
+            .emit_event_with_path(eventmanager, "spec")
+            .await?;
         if let Some((field_path, id)) = self.get_id() {
-            group = manager
-                .get_group_by_id(id)
+            group = tracker
+                .get_by_id(id)
                 .await
                 .emit_event_with_path(eventmanager, field_path)
                 .await?;
         }
         if group.is_none() && self.spec.id.is_none() {
-            group = manager
-                .get_group_by_friendly_name(&self.spec.friendly_name)
+            group = tracker
+                .get_by_friendly_name(&self.spec.friendly_name)
                 .await
                 .emit_event_with_path(eventmanager, "spec.friendly_name")
                 .await?;
@@ -140,8 +145,8 @@ impl Group {
                 .await
                 .emit_event_with_path(eventmanager, "spec")
                 .await?;
-            group = manager
-                .get_group_by_id(id)
+            group = tracker
+                .get_by_id(id)
                 .await
                 .emit_event_with_path(eventmanager, "spec.id")
                 .await?;

@@ -178,7 +178,11 @@ impl Device {
             .clone()
             .unwrap_or_else(|| self.spec.ieee_address.clone());
         let info = manager
-            .get_bridge_device_definition(&self.spec.ieee_address)
+            .get_bridge_device_tracker()
+            .await
+            .emit_event_with_path(eventmanager, "spec.instance")
+            .await?
+            .get(&self.spec.ieee_address)
             .await
             .emit_event_with_path(eventmanager, "spec.ieee_address")
             .await?;

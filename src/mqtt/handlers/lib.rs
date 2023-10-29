@@ -2,7 +2,7 @@ use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
 
 use futures::Stream;
 use serde::{Deserialize, Serialize};
-use tokio::time::timeout;
+use tokio::{sync::Mutex, time::timeout};
 
 use super::super::{
     manager::Manager,
@@ -13,7 +13,22 @@ use crate::{error::Error, TIMEOUT};
 ///
 /// Track the latest version of a retained message on a topic.
 ///
-pub(crate) struct TopicTracker<T>
+pub(crate) struct TopicTracker<T>(Mutex<TopicTrackerInner<T>>)
+where
+    T: TopicTrackerType;
+impl<T> TopicTracker<T>
+where
+    T: TopicTrackerType,
+{
+    pub async fn new(manager: Arc<Manager>) -> Result<Self, Error> {
+        Ok(Self(Mutex::new(TopicTrackerInner::new(manager).await?)))
+    }
+
+    pub async fn get(self: &Arc<Self>) -> Result<T::Payload, Error> {
+        self.0.lock().await.get().await
+    }
+}
+pub(crate) struct TopicTrackerInner<T>
 where
     T: TopicTrackerType,
 {
@@ -21,11 +36,11 @@ where
     value: Option<T::Payload>,
     _type: PhantomData<T>,
 }
-impl<T> TopicTracker<T>
+impl<T> TopicTrackerInner<T>
 where
     T: TopicTrackerType,
 {
-    pub async fn new(manager: Arc<Manager>) -> Result<Self, Error> {
+    async fn new(manager: Arc<Manager>) -> Result<Self, Error> {
         let subscription = manager
             .subscribe_topic(T::TOPIC, 1)
             .await?
@@ -40,7 +55,7 @@ where
         })
     }
 
-    pub async fn get(&mut self) -> Result<T::Payload, Error> {
+    async fn get(&mut self) -> Result<T::Payload, Error> {
         if let Ok(result) =
             timeout(Duration::from_millis(1), self.subscription.next_noclose()).await
         {
@@ -140,7 +155,7 @@ macro_rules! add_wrapper_new {
     ) => {
         impl $name {
             pub async fn new(manager: Arc<Manager>) -> Result<Self, Error> {
-                return Ok(Self($type::new(manager).await?));
+                return Ok(Self($type::new(manager).await?.into()));
             }
         }
     };

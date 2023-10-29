@@ -21,14 +21,14 @@ use crate::{error::Error, mqtt::exposes::Processor, TIMEOUT};
 //
 // Track bridge device topic.
 //
-pub struct BridgeDevicesTracker(TopicTracker<Self>);
+pub struct BridgeDevicesTracker(Arc<TopicTracker<Self>>);
 add_wrapper_new!(BridgeDevicesTracker, TopicTracker);
 impl TopicTrackerType for BridgeDevicesTracker {
     const TOPIC: &'static str = "bridge/devices";
     type Payload = BridgeDevicesPayload;
 }
 impl BridgeDevicesTracker {
-    pub async fn get(&mut self, ieee_address: &str) -> Result<BridgeDevice, Error> {
+    pub async fn get(&self, ieee_address: &str) -> Result<BridgeDevice, Error> {
         let device = self
             .0
             .get()
@@ -136,7 +136,9 @@ impl OptionsManager {
     pub async fn get(&mut self) -> Result<Map<String, Value>, Error> {
         Ok(self
             .manager
-            .get_bridge_info()
+            .get_bridge_info_tracker()
+            .await?
+            .get()
             .await?
             .config
             .devices
@@ -148,7 +150,9 @@ impl OptionsManager {
     pub async fn set(&mut self, options: &Map<String, Value>) -> Result<Map<String, Value>, Error> {
         let device = self
             .manager
-            .get_bridge_device_definition(&self.ieee_address)
+            .get_bridge_device_tracker()
+            .await?
+            .get(&self.ieee_address)
             .await?
             .definition
             .unwrap_or_default();
@@ -297,7 +301,9 @@ impl CapabilitiesManager {
     pub async fn set(&mut self, capabilities: Value) -> Result<CapabilitiesPayload, Error> {
         let device = self
             .manager
-            .get_bridge_device_definition(&self.ieee_address)
+            .get_bridge_device_tracker()
+            .await?
+            .get(&self.ieee_address)
             .await?
             .definition
             .unwrap_or_default();

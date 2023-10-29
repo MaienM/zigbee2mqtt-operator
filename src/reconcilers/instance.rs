@@ -181,7 +181,11 @@ impl Instance {
         eventmanager: &EventManager,
     ) -> Result<(), EmittedError> {
         let restart_required = manager
-            .get_bridge_info()
+            .get_bridge_info_tracker()
+            .await
+            .emit_event_with_path(eventmanager, "spec")
+            .await?
+            .get()
             .await
             .emit_event_with_path(eventmanager, "spec")
             .await?
