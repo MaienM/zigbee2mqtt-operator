@@ -90,6 +90,9 @@ pub trait EmittableResult<V> {
     /// For [`Error::InvalidResource`] the paths will be combined as `{field_path}{error.field_path}`.
     async fn emit_event(self, manager: &EventManager, field_path: &str) -> Result<V, EmittedError>;
 
+    /// Emit the event.
+    async fn emit_event_nopath(self, manager: &EventManager) -> Result<V, EmittedError>;
+
     /// Mark error as published without actually publishing anything. This should only be used in cases where one or more events have already been published for the error manually.
     fn fake_emit_event(self) -> Result<V, EmittedError>;
 }
@@ -129,6 +132,21 @@ where
         self.map_err(EmittedError)
     }
 
+    async fn emit_event_nopath(mut self, manager: &EventManager) -> Result<V, EmittedError> {
+        if let Err(ref error) = self {
+            manager
+                .publish_nolog(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(error.to_string()),
+                    reason: "Created".to_string(),
+                    type_: EventType::Warning,
+                    field_path: None,
+                })
+                .await;
+        }
+        self.map_err(EmittedError)
+    }
+
     fn fake_emit_event(self) -> Result<V, EmittedError> {
         self.map_err(EmittedError)
     }
@@ -139,6 +157,9 @@ where
 pub trait EmittableResultFuture<V> {
     /// See [`EmittableResult::emit_event`].
     async fn emit_event(self, manager: &EventManager, field_path: &str) -> Result<V, EmittedError>;
+
+    /// See [`EmittableResult::emit_event_nopath`].
+    async fn emit_event_nopath(self, manager: &EventManager) -> Result<V, EmittedError>;
 
     /// See [`EmittableResult::fake_emit_event`].
     async fn fake_emit_event(self) -> Result<V, EmittedError>;
@@ -155,6 +176,10 @@ where
         field_path: &str,
     ) -> Result<V, EmittedError> {
         self.await.emit_event(manager, field_path).await
+    }
+
+    async fn emit_event_nopath(mut self, manager: &EventManager) -> Result<V, EmittedError> {
+        self.await.emit_event_nopath(manager).await
     }
 
     async fn fake_emit_event(self) -> Result<V, EmittedError> {

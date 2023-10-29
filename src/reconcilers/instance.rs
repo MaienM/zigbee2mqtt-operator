@@ -107,7 +107,7 @@ impl Instance {
                     None,
                 )),
             }
-            .emit_event(eventmanager, "spec")
+            .emit_event_nopath(eventmanager)
             .await?;
 
         spawn(background_task!(
@@ -180,10 +180,10 @@ impl Instance {
     ) -> Result<(), EmittedError> {
         let restart_required = manager
             .get_bridge_info_tracker()
-            .emit_event(eventmanager, "spec")
+            .emit_event_nopath(eventmanager)
             .await?
             .get()
-            .emit_event(eventmanager, "spec")
+            .emit_event_nopath(eventmanager)
             .await?
             .restart_required;
         if restart_required {
@@ -193,12 +193,12 @@ impl Instance {
                     note: Some("Zigbee2MQTT requested restart, doing so now. Any reconcile actions on this instance during this restart will fail.".to_owned()),
                     reason: "Created".to_string(),
                     type_: EventType::Normal,
-                    field_path: Some("spec".to_owned()),
+                    field_path: None,
                 })
             .await;
             manager
                 .restart_zigbee2mqtt()
-                .emit_event(eventmanager, "spec")
+                .emit_event_nopath(eventmanager)
                 .await?;
         }
         Ok(())

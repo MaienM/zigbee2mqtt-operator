@@ -118,7 +118,7 @@ impl Group {
         let mut group: Option<BridgeGroup> = None;
         let tracker = manager
             .get_group_tracker()
-            .emit_event(eventmanager, "spec")
+            .emit_event_nopath(eventmanager)
             .await?;
         if let Some((field_path, id)) = self.get_id() {
             group = tracker
@@ -147,7 +147,7 @@ impl Group {
                 "Failed to find or create group.".to_owned(),
                 None,
             ))
-            .emit_event(eventmanager, "spec")
+            .emit_event_nopath(eventmanager)
             .await;
         };
         Ok(group)
