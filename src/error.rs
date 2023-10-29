@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::Future;
 use kube::runtime::finalizer::Error as FinalizerError;
 use thiserror::Error;
 
@@ -87,11 +88,7 @@ pub trait EmittableResult<V> {
     /// Emit the event, using the given path as context for the source of the error (see [`EventCore::field_path`]).
     ///
     /// For [`Error::InvalidResource`] the paths will be combined as `{field_path}{error.field_path}`.
-    async fn emit_event_with_path(
-        self,
-        manager: &EventManager,
-        field_path: &str,
-    ) -> Result<V, EmittedError>;
+    async fn emit_event(self, manager: &EventManager, field_path: &str) -> Result<V, EmittedError>;
 
     /// Mark error as published without actually publishing anything. This should only be used in cases where one or more events have already been published for the error manually.
     fn fake_emit_event(self) -> Result<V, EmittedError>;
@@ -101,7 +98,7 @@ impl<V> EmittableResult<V> for Result<V, Error>
 where
     V: Send,
 {
-    async fn emit_event_with_path(
+    async fn emit_event(
         mut self,
         manager: &EventManager,
         field_path: &str,
@@ -134,5 +131,33 @@ where
 
     fn fake_emit_event(self) -> Result<V, EmittedError> {
         self.map_err(EmittedError)
+    }
+}
+
+/// Helper to use [`EmittableResult`] methods directly on a [`Future`], saving a layer of `.await` calls.
+#[async_trait]
+pub trait EmittableResultFuture<V> {
+    /// See [`EmittableResult::emit_event`].
+    async fn emit_event(self, manager: &EventManager, field_path: &str) -> Result<V, EmittedError>;
+
+    /// See [`EmittableResult::fake_emit_event`].
+    async fn fake_emit_event(self) -> Result<V, EmittedError>;
+}
+#[async_trait]
+impl<F, V> EmittableResultFuture<V> for F
+where
+    F: Future<Output = Result<V, Error>> + Send,
+    V: Send,
+{
+    async fn emit_event(
+        mut self,
+        manager: &EventManager,
+        field_path: &str,
+    ) -> Result<V, EmittedError> {
+        self.await.emit_event(manager, field_path).await
+    }
+
+    async fn fake_emit_event(self) -> Result<V, EmittedError> {
+        self.await.fake_emit_event()
     }
 }

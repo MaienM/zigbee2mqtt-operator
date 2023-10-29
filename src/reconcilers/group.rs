@@ -7,7 +7,7 @@ use kube::{runtime::controller::Action, ResourceExt};
 
 use crate::{
     crds::{Group, GroupStatus},
-    error::{EmittableResult, Error},
+    error::{EmittableResult, EmittableResultFuture, Error},
     event_manager::{EventManager, EventType},
     mqtt::{BridgeGroup, Manager},
     status_manager::StatusManager,
@@ -46,8 +46,7 @@ impl Reconciler for Group {
                     .await;
                 manager
                     .delete_group(group.id)
-                    .await
-                    .emit_event_with_path(&eventmanager, "spec.id")
+                    .emit_event(&eventmanager, "spec.id")
                     .await?;
                 group = self.get_or_create_group(&manager, &eventmanager).await?;
             }
@@ -62,8 +61,7 @@ impl Reconciler for Group {
         if group.friendly_name != self.spec.friendly_name {
             manager
                 .rename_group(group.id, &self.spec.friendly_name)
-                .await
-                .emit_event_with_path(&eventmanager, "spec.friendly_name")
+                .emit_event(&eventmanager, "spec.friendly_name")
                 .await?;
         }
 
@@ -81,8 +79,7 @@ impl Reconciler for Group {
         if let Some(GroupStatus { id: Some(id), .. }) = self.status {
             manager
                 .delete_group(id)
-                .await
-                .emit_event_with_path(&eventmanager, "status.id")
+                .emit_event(&eventmanager, "status.id")
                 .await?;
         }
 
@@ -109,8 +106,7 @@ impl Group {
         ctx.state
             .managers
             .get(&instance, *TIMEOUT)
-            .await
-            .emit_event_with_path(eventmanager, "spec.instance")
+            .emit_event(eventmanager, "spec.instance")
             .await
     }
 
@@ -122,33 +118,28 @@ impl Group {
         let mut group: Option<BridgeGroup> = None;
         let tracker = manager
             .get_group_tracker()
-            .await
-            .emit_event_with_path(eventmanager, "spec")
+            .emit_event(eventmanager, "spec")
             .await?;
         if let Some((field_path, id)) = self.get_id() {
             group = tracker
                 .get_by_id(id)
-                .await
-                .emit_event_with_path(eventmanager, field_path)
+                .emit_event(eventmanager, field_path)
                 .await?;
         }
         if group.is_none() && self.spec.id.is_none() {
             group = tracker
                 .get_by_friendly_name(&self.spec.friendly_name)
-                .await
-                .emit_event_with_path(eventmanager, "spec.friendly_name")
+                .emit_event(eventmanager, "spec.friendly_name")
                 .await?;
         }
         if group.is_none() {
             let id = manager
                 .create_group(self.spec.id, &self.spec.friendly_name)
-                .await
-                .emit_event_with_path(eventmanager, "spec")
+                .emit_event(eventmanager, "spec")
                 .await?;
             group = tracker
                 .get_by_id(id)
-                .await
-                .emit_event_with_path(eventmanager, "spec.id")
+                .emit_event(eventmanager, "spec.id")
                 .await?;
         }
         let Some(group) = group else {
@@ -156,7 +147,7 @@ impl Group {
                 "Failed to find or create group.".to_owned(),
                 None,
             ))
-            .emit_event_with_path(eventmanager, "spec")
+            .emit_event(eventmanager, "spec")
             .await;
         };
         Ok(group)

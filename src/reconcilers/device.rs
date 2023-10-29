@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     crds::Device,
-    error::{EmittableResult, Error},
+    error::{EmittableResult, EmittableResultFuture, Error},
     event_manager::{EventCore, EventManager, EventType},
     mqtt::Manager,
     status_manager::StatusManager,
@@ -65,7 +65,7 @@ async fn do_sync<F>(
     mut apply: impl FnMut() -> F,
 ) -> Result<(), EmittedError>
 where
-    F: Future<Output = Result<Map<String, Value>, Error>>,
+    F: Future<Output = Result<Map<String, Value>, Error>> + Send,
 {
     let differences = find_differences(wanted, actual);
     for difference in &differences {
@@ -88,10 +88,7 @@ where
         return Ok(());
     }
 
-    let result = apply()
-        .await
-        .emit_event_with_path(eventmanager, field_path)
-        .await?;
+    let result = apply().emit_event(eventmanager, field_path).await?;
     let differences = find_differences(wanted, &result);
     for difference in &differences {
         let Difference {
@@ -136,8 +133,7 @@ impl Reconciler for Device {
             .state
             .managers
             .get(&instance, *TIMEOUT)
-            .await
-            .emit_event_with_path(&eventmanager, "spec.instance")
+            .emit_event(&eventmanager, "spec.instance")
             .await?;
 
         statusmanager.update(|s| {
@@ -179,12 +175,10 @@ impl Device {
             .unwrap_or_else(|| self.spec.ieee_address.clone());
         let info = manager
             .get_bridge_device_tracker()
-            .await
-            .emit_event_with_path(eventmanager, "spec.instance")
+            .emit_event(eventmanager, "spec.instance")
             .await?
             .get(&self.spec.ieee_address)
-            .await
-            .emit_event_with_path(eventmanager, "spec.ieee_address")
+            .emit_event(eventmanager, "spec.ieee_address")
             .await?;
         if info.friendly_name != wanted_friendly_name {
             eventmanager
@@ -201,8 +195,7 @@ impl Device {
                     .await;
             manager
                 .rename_device(&self.spec.ieee_address, &wanted_friendly_name)
-                .await
-                .emit_event_with_path(eventmanager, "spec.friendly_name")
+                .emit_event(eventmanager, "spec.friendly_name")
                 .await?;
         }
         Ok(wanted_friendly_name)
@@ -219,13 +212,11 @@ impl Device {
 
         let mut options_manager = manager
             .get_device_options_manager(self.spec.ieee_address.clone())
-            .await
-            .emit_event_with_path(eventmanager, "spec.ieee_address")
+            .emit_event(eventmanager, "spec.ieee_address")
             .await?;
         let current_options = options_manager
             .get()
-            .await
-            .emit_event_with_path(eventmanager, "spec.ieee_address")
+            .emit_event(eventmanager, "spec.ieee_address")
             .await?;
 
         // Set all options that are currently set but which are not present in the spec to null as this will restore them to their default values.
@@ -269,13 +260,11 @@ impl Device {
 
         let mut capabilities_manager = manager
             .get_device_capabilities_manager(self.spec.ieee_address.clone(), friendly_name)
-            .await
-            .emit_event_with_path(eventmanager, "spec.friendly_name")
+            .emit_event(eventmanager, "spec.friendly_name")
             .await?;
         let current_capabilities = capabilities_manager
             .get()
-            .await
-            .emit_event_with_path(eventmanager, "spec.friendly_name")
+            .emit_event(eventmanager, "spec.friendly_name")
             .await?;
 
         let capabilities_manager = Arc::new(Mutex::new(capabilities_manager));

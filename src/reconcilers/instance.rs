@@ -10,7 +10,7 @@ use tracing::{error_span, info_span};
 use crate::{
     background_task,
     crds::Instance,
-    error::{EmittableResult, Error},
+    error::{EmittableResult, EmittableResultFuture, Error},
     event_manager::{EventManager, EventType},
     mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
     status_manager::StatusManager,
@@ -60,14 +60,12 @@ impl Instance {
                 username: cred
                     .username
                     .get(&ctx.client, self)
-                    .await
-                    .emit_event_with_path(eventmanager, "spec.credentials.username")
+                    .emit_event(eventmanager, "spec.credentials.username")
                     .await?,
                 password: cred
                     .password
                     .get(&ctx.client, self)
-                    .await
-                    .emit_event_with_path(eventmanager, "spec.credentials.password")
+                    .emit_event(eventmanager, "spec.credentials.password")
                     .await?,
             });
         }
@@ -109,7 +107,7 @@ impl Instance {
                     None,
                 )),
             }
-            .emit_event_with_path(eventmanager, "spec")
+            .emit_event(eventmanager, "spec")
             .await?;
 
         spawn(background_task!(
@@ -182,12 +180,10 @@ impl Instance {
     ) -> Result<(), EmittedError> {
         let restart_required = manager
             .get_bridge_info_tracker()
-            .await
-            .emit_event_with_path(eventmanager, "spec")
+            .emit_event(eventmanager, "spec")
             .await?
             .get()
-            .await
-            .emit_event_with_path(eventmanager, "spec")
+            .emit_event(eventmanager, "spec")
             .await?
             .restart_required;
         if restart_required {
@@ -202,8 +198,7 @@ impl Instance {
             .await;
             manager
                 .restart_zigbee2mqtt()
-                .await
-                .emit_event_with_path(eventmanager, "spec")
+                .emit_event(eventmanager, "spec")
                 .await?;
         }
         Ok(())
