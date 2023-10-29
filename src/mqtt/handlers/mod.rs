@@ -12,4 +12,4 @@ pub use group::{
     BridgeGroup, BridgeGroupsPayload, BridgeGroupsTracker, Creator as GroupCreator,
     Deletor as GroupDeletor, Renamer as GroupRenamer,
 };
-pub use misc::{BridgeInfoPayload, BridgeInfoTracker, HealthChecker};
+pub use misc::{BridgeInfoPayload, BridgeInfoTracker, HealthChecker, Restarter};

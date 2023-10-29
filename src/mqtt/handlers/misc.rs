@@ -27,6 +27,7 @@ impl TopicTrackerType for BridgeInfoTracker {
 #[derive(Deserialize, Debug, Clone)]
 pub struct BridgeInfoPayload {
     pub config: BridgeInfoConfig,
+    pub restart_required: bool,
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct BridgeInfoConfig {
@@ -63,4 +64,25 @@ impl BridgeRequestType for HealthChecker {
 #[derive(Deserialize)]
 pub(crate) struct HealthcheckResponse {
     healthy: bool,
+}
+
+///
+/// Restart Zigbee2MQTT.
+///
+pub struct Restarter(BridgeRequest<Restarter>);
+add_wrapper_new!(Restarter, BridgeRequest);
+impl Restarter {
+    pub async fn run(&mut self) -> Result<(), Error> {
+        self.0.request(Map::new()).await?;
+        Ok(())
+    }
+}
+impl BridgeRequestType for Restarter {
+    const NAME: &'static str = "restart";
+    type Request = Map<String, Value>;
+    type Response = Map<String, Value>;
+
+    fn matches(_request: &Self::Request, _response: &RequestResponse<Self::Response>) -> bool {
+        true
+    }
 }

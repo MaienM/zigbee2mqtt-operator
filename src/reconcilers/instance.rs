@@ -11,105 +11,20 @@ use crate::{
     background_task,
     crds::Instance,
     error::{EmittableResult, Error},
-    event_manager::EventManager,
+    event_manager::{EventManager, EventType},
     mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
     status_manager::StatusManager,
-    Context, EmittedError, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL,
+    Context, EmittedError, EventCore, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL,
 };
 
 #[async_trait]
 impl Reconciler for Instance {
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        let manager_awaitable = ctx.state.managers.get_or_create(self.full_name()).await;
         let eventmanager = EventManager::new(ctx.client.clone(), self);
 
-        // Apply options to manager. If this results in an error this means the manager must be recreated so we discard it.
-        let options = self.to_options(&ctx, &eventmanager).await?;
-        let manager = match manager_awaitable.get_immediate().await {
-            Some(Ok(manager)) => match manager.update_options(options.clone()).await {
-                Ok(_) => Some(manager),
-                Err(err) => {
-                    info_span!("replacing manager", id = self.full_name(), ?err);
-                    manager_awaitable.clear().await;
-                    manager.close(None).await;
-                    None
-                }
-            },
-            _ => None,
-        };
+        let manager = self.setup_manager(&ctx, &eventmanager).await?;
 
-        if manager.is_none() {
-            let (manager, mut status_receiver) =
-                match timeout(Duration::from_secs(30), Manager::new(options)).await {
-                    Ok(result) => result,
-                    Err(_) => Err(Error::ActionFailed(
-                        "timeout while starting manager instance".to_string(),
-                        None,
-                    )),
-                }
-                .emit_event_with_path(&eventmanager, "spec")
-                .await?;
-
-            spawn(background_task!(
-                format!("status reporter for instance {id}", id = self.id()),
-                {
-                    let eventmanager = EventManager::new(ctx.client.clone(), self);
-                    let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
-                    let _lock = manager_awaitable.clone();
-                    async move {
-                        let _lock = _lock; // Keep a reference to the manager's AwaitableValue as long as it is in use.
-
-                        statusmanager.update(|s| {
-                            s.broker = false;
-                            s.zigbee2mqtt = false;
-                        });
-                        statusmanager.sync().await;
-
-                        while let Some(event) = status_receiver.recv().await {
-                            eventmanager.publish((&event).into()).await;
-                            statusmanager.update(|s| {
-                                match event {
-                                    Status::ConnectionStatus(ConnectionStatus::Active) => {
-                                        s.broker = true;
-                                    }
-                                    Status::ConnectionStatus(
-                                        ConnectionStatus::Inactive
-                                        | ConnectionStatus::Closed
-                                        | ConnectionStatus::Failed(_)
-                                        | ConnectionStatus::Refused(_),
-                                    ) => {
-                                        s.broker = false;
-                                        s.zigbee2mqtt = false;
-                                    }
-                                    Status::ConnectionStatus(_) => {}
-
-                                    Status::Z2MStatus(Z2MStatus::HealthOk) => {
-                                        s.broker = true;
-                                        s.zigbee2mqtt = true;
-                                    }
-                                    Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
-                                        s.zigbee2mqtt = false;
-                                    }
-                                };
-                            });
-                            statusmanager.sync().await;
-                        }
-                        Ok(())
-                    }
-                },
-                {
-                    let manager_awaitable = manager_awaitable.clone();
-                    let manager = manager.clone();
-                    |err| async move {
-                        error_span!("status reporter for instance stopped", ?err);
-                        manager_awaitable.clear().await;
-                        let shutdown_reason = manager.close(Some(Box::new(err))).await;
-                        manager_awaitable.invalidate(shutdown_reason).await;
-                    }
-                }
-            ));
-            manager_awaitable.set(manager).await;
-        };
+        self.restart_if_needed(&manager, &eventmanager).await?;
 
         Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
@@ -158,5 +73,135 @@ impl Instance {
         }
 
         Ok(options)
+    }
+
+    async fn setup_manager(
+        &self,
+        ctx: &Arc<Context>,
+        eventmanager: &EventManager,
+    ) -> Result<Arc<Manager>, EmittedError> {
+        let manager_awaitable = ctx.state.managers.get_or_create(self.full_name()).await;
+
+        // Apply options to manager. If this results in an error this means the manager must be recreated so we discard it.
+        let options = self.to_options(ctx, eventmanager).await?;
+        let manager = match manager_awaitable.get_immediate().await {
+            Some(Ok(manager)) => match manager.update_options(options.clone()).await {
+                Ok(_) => Some(manager),
+                Err(err) => {
+                    info_span!("replacing manager", id = self.full_name(), ?err);
+                    manager_awaitable.clear().await;
+                    manager.close(None).await;
+                    None
+                }
+            },
+            _ => None,
+        };
+
+        if let Some(manager) = manager {
+            return Ok(manager);
+        }
+
+        let (manager, mut status_receiver) =
+            match timeout(Duration::from_secs(30), Manager::new(options)).await {
+                Ok(result) => result,
+                Err(_) => Err(Error::ActionFailed(
+                    "timeout while starting manager instance".to_string(),
+                    None,
+                )),
+            }
+            .emit_event_with_path(eventmanager, "spec")
+            .await?;
+
+        spawn(background_task!(
+            format!("status reporter for instance {id}", id = self.id()),
+            {
+                let eventmanager = EventManager::new(ctx.client.clone(), self);
+                let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
+                let lock = manager_awaitable.clone();
+                async move {
+                    let _lock = lock; // Keep a reference to the manager's AwaitableValue as long as it is in use.
+
+                    statusmanager.update(|s| {
+                        s.broker = false;
+                        s.zigbee2mqtt = false;
+                    });
+                    statusmanager.sync().await;
+
+                    while let Some(event) = status_receiver.recv().await {
+                        eventmanager.publish((&event).into()).await;
+                        statusmanager.update(|s| {
+                            match event {
+                                Status::ConnectionStatus(ConnectionStatus::Active) => {
+                                    s.broker = true;
+                                }
+                                Status::ConnectionStatus(
+                                    ConnectionStatus::Inactive
+                                    | ConnectionStatus::Closed
+                                    | ConnectionStatus::Failed(_)
+                                    | ConnectionStatus::Refused(_),
+                                ) => {
+                                    s.broker = false;
+                                    s.zigbee2mqtt = false;
+                                }
+                                Status::ConnectionStatus(_) => {}
+
+                                Status::Z2MStatus(Z2MStatus::HealthOk) => {
+                                    s.broker = true;
+                                    s.zigbee2mqtt = true;
+                                }
+                                Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
+                                    s.zigbee2mqtt = false;
+                                }
+                            };
+                        });
+                        statusmanager.sync().await;
+                    }
+                    Ok(())
+                }
+            },
+            {
+                let manager_awaitable = manager_awaitable.clone();
+                let manager = manager.clone();
+                |err| async move {
+                    error_span!("status reporter for instance stopped", ?err);
+                    manager_awaitable.clear().await;
+                    let shutdown_reason = manager.close(Some(Box::new(err))).await;
+                    manager_awaitable.invalidate(shutdown_reason).await;
+                }
+            }
+        ));
+        manager_awaitable.set(manager.clone()).await;
+
+        Ok(manager)
+    }
+
+    async fn restart_if_needed(
+        &self,
+        manager: &Arc<Manager>,
+        eventmanager: &EventManager,
+    ) -> Result<(), EmittedError> {
+        let restart_required = manager
+            .get_bridge_info()
+            .await
+            .emit_event_with_path(eventmanager, "spec")
+            .await?
+            .restart_required;
+        if restart_required {
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some("Zigbee2MQTT requested restart, doing so now. Any reconcile actions on this instance during this restart will fail.".to_owned()),
+                    reason: "Created".to_string(),
+                    type_: EventType::Normal,
+                    field_path: Some("spec".to_owned()),
+                })
+            .await;
+            manager
+                .restart_zigbee2mqtt()
+                .await
+                .emit_event_with_path(eventmanager, "spec")
+                .await?;
+        }
+        Ok(())
     }
 }

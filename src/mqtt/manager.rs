@@ -19,7 +19,7 @@ use super::{
     handlers::{
         BridgeDevice, BridgeDevicesTracker, BridgeGroup, BridgeGroupsTracker, BridgeInfoTracker,
         DeviceCapabilitiesManager, DeviceOptionsManager, DeviceRenamer, GroupCreator, GroupDeletor,
-        GroupRenamer, HealthChecker,
+        GroupRenamer, HealthChecker, Restarter,
     },
     subscription::TopicSubscription,
     BridgeInfoPayload,
@@ -726,6 +726,10 @@ impl Manager {
             .await
             .get()
             .await
+    }
+
+    pub async fn restart_zigbee2mqtt(self: &Arc<Self>) -> Result<(), Error> {
+        Restarter::new(self.clone()).await?.run().await
     }
 
     pub async fn get_bridge_device_definition(
