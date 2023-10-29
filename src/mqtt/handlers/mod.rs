@@ -10,6 +10,7 @@ pub use device::{
 };
 pub use group::{
     BridgeGroup, BridgeGroupsPayload, BridgeGroupsTracker, Creator as GroupCreator,
-    Deletor as GroupDeletor, Renamer as GroupRenamer,
+    Deletor as GroupDeletor, MemberAdder as GroupMemberAdder, MemberRemover as GroupMemberRemover,
+    Renamer as GroupRenamer,
 };
 pub use misc::{BridgeInfoPayload, BridgeInfoTracker, HealthChecker, Restarter};

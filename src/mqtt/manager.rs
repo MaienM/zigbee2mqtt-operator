@@ -18,8 +18,8 @@ use veil::Redact;
 use super::{
     handlers::{
         BridgeDevicesTracker, BridgeGroupsTracker, BridgeInfoTracker, DeviceCapabilitiesManager,
-        DeviceOptionsManager, DeviceRenamer, GroupCreator, GroupDeletor, GroupRenamer,
-        HealthChecker, Restarter,
+        DeviceOptionsManager, DeviceRenamer, GroupCreator, GroupDeletor, GroupMemberAdder,
+        GroupMemberRemover, GroupRenamer, HealthChecker, Restarter,
     },
     subscription::TopicSubscription,
 };
@@ -794,6 +794,28 @@ impl Manager {
         GroupRenamer::new(self.clone())
             .await?
             .run(id, friendly_name)
+            .await
+    }
+
+    pub async fn add_group_member(
+        self: &Arc<Self>,
+        group: usize,
+        device: &str,
+    ) -> Result<(), Error> {
+        GroupMemberAdder::new(self.clone())
+            .await?
+            .run(group, device)
+            .await
+    }
+
+    pub async fn remove_group_member(
+        self: &Arc<Self>,
+        group: usize,
+        device: &str,
+    ) -> Result<(), Error> {
+        GroupMemberRemover::new(self.clone())
+            .await?
+            .run(group, device)
             .await
     }
 }

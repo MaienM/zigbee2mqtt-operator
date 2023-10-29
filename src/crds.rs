@@ -208,6 +208,10 @@ pub struct GroupSpec {
     /// If not provided a random id will be generated for the group.
     #[garde(range(min = 1))]
     pub id: Option<usize>,
+
+    /// `ieee_address`es or `friendly_name`s of [`Device`]s that should be a member of this group.
+    #[garde(inner(inner(ascii, length(min = 1))))]
+    pub members: Option<Vec<String>>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
 #[allow(missing_docs)]

@@ -1,6 +1,9 @@
 //! Reconcile logic for [`Group`].
 
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use kube::{runtime::controller::Action, ResourceExt};
@@ -32,25 +35,7 @@ impl Reconciler for Group {
             s.exists = Some(false);
         });
 
-        let mut group = self.get_or_create_group(&manager, &eventmanager).await?;
-        if let Some(id) = self.spec.id {
-            if id != group.id {
-                eventmanager
-                    .publish(EventCore {
-                        action: "Reconciling".to_string(),
-                        note: Some("id changed, deleting and recreating group".to_owned()),
-                        reason: "Changed".to_string(),
-                        type_: EventType::Normal,
-                        field_path: Some("spec.id".to_owned()),
-                    })
-                    .await;
-                manager
-                    .delete_group(group.id)
-                    .emit_event(&eventmanager, "spec.id")
-                    .await?;
-                group = self.get_or_create_group(&manager, &eventmanager).await?;
-            }
-        }
+        let group = self.sync_existence(&manager, &eventmanager).await?;
 
         statusmanager.update(|s| {
             s.exists = Some(true);
@@ -58,12 +43,8 @@ impl Reconciler for Group {
             s.synced = Some(false);
         });
 
-        if group.friendly_name != self.spec.friendly_name {
-            manager
-                .rename_group(group.id, &self.spec.friendly_name)
-                .emit_event(&eventmanager, "spec.friendly_name")
-                .await?;
-        }
+        self.sync_name(&manager, &eventmanager, &group).await?;
+        self.sync_members(&manager, &eventmanager, &group).await?;
 
         statusmanager.update(|s| {
             s.synced = Some(true);
@@ -108,6 +89,132 @@ impl Group {
             .get(&instance, *TIMEOUT)
             .emit_event(eventmanager, "spec.instance")
             .await
+    }
+
+    async fn sync_existence(
+        &self,
+        manager: &Arc<Manager>,
+        eventmanager: &EventManager,
+    ) -> Result<BridgeGroup, EmittedError> {
+        let mut group = self.get_or_create_group(manager, eventmanager).await?;
+        if let Some(id) = self.spec.id {
+            if id != group.id {
+                eventmanager
+                    .publish(EventCore {
+                        action: "Reconciling".to_string(),
+                        note: Some("id changed, deleting and recreating group".to_owned()),
+                        reason: "Changed".to_string(),
+                        type_: EventType::Normal,
+                        field_path: Some("spec.id".to_owned()),
+                    })
+                    .await;
+                manager
+                    .delete_group(group.id)
+                    .emit_event(eventmanager, "spec.id")
+                    .await?;
+                group = self.get_or_create_group(manager, eventmanager).await?;
+            }
+        }
+        Ok(group)
+    }
+
+    async fn sync_name(
+        &self,
+        manager: &Arc<Manager>,
+        eventmanager: &EventManager,
+        group: &BridgeGroup,
+    ) -> Result<(), EmittedError> {
+        if group.friendly_name != self.spec.friendly_name {
+            manager
+                .rename_group(group.id, &self.spec.friendly_name)
+                .emit_event(eventmanager, "spec.friendly_name")
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn sync_members(
+        &self,
+        manager: &Arc<Manager>,
+        eventmanager: &EventManager,
+        group: &BridgeGroup,
+    ) -> Result<(), EmittedError> {
+        let Some(ref members) = self.spec.members else {
+            return Ok(());
+        };
+
+        let devices: HashMap<String, String> = manager
+            .get_bridge_device_tracker()
+            .emit_event_nopath(eventmanager)
+            .await?
+            .get_all()
+            .emit_event_nopath(eventmanager)
+            .await?
+            .into_iter()
+            .flat_map(|d| {
+                [
+                    (d.ieee_address.clone(), d.ieee_address.clone()),
+                    (d.friendly_name, d.ieee_address),
+                ]
+            })
+            .collect();
+
+        let mut wanted = HashSet::new();
+        for member in members {
+            match devices.get(member) {
+                Some(address) => {
+                    wanted.insert(address.clone());
+                }
+                None => {
+                    return Err(Error::ActionFailed(
+                        format!("cannot find device with ieee_address or friendly_name '{member}'"),
+                        None,
+                    ))
+                    .emit_event(eventmanager, "spec.members")
+                    .await;
+                }
+            }
+        }
+
+        let current: HashSet<_> = group
+            .members
+            .iter()
+            .map(|m| m.ieee_address.clone())
+            .collect();
+
+        for address in current.difference(&wanted) {
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(format!("removing device {address} from group")),
+                    reason: "Changed".to_string(),
+                    type_: EventType::Normal,
+                    field_path: Some("spec.members".to_owned()),
+                })
+                .await;
+            manager
+                .remove_group_member(group.id, address)
+                .emit_event(eventmanager, "spec.members")
+                .await?;
+        }
+
+        for address in wanted.difference(&current) {
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(format!("adding device {address} to group")),
+                    reason: "Changed".to_string(),
+                    type_: EventType::Normal,
+                    field_path: Some("spec.members".to_owned()),
+                })
+                .await;
+            manager
+                .add_group_member(group.id, address)
+                .emit_event(eventmanager, "spec.members")
+                .await?;
+        }
+
+        Ok(())
     }
 
     async fn get_or_create_group(

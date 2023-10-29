@@ -167,3 +167,66 @@ pub(crate) struct RenameRequest {
 pub(crate) struct RenameResponse {
     to: String,
 }
+
+///
+/// Add a device to a group.
+///
+pub struct MemberAdder(BridgeRequest<MemberAdder>);
+add_wrapper_new!(MemberAdder, BridgeRequest);
+impl MemberAdder {
+    pub async fn run(&mut self, group: usize, device: &str) -> Result<(), Error> {
+        self.0
+            .request(MemberPayload {
+                group,
+                device: device.to_owned(),
+            })
+            .await?;
+        Ok(())
+    }
+}
+impl BridgeRequestType for MemberAdder {
+    const NAME: &'static str = "group/members/add";
+    type Request = MemberPayload;
+    type Response = MemberPayload;
+
+    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+        match response {
+            RequestResponse::Ok { data } => data == request,
+            RequestResponse::Error { error } => {
+                error.contains(&format!("'{group}'", group = request.group))
+                    || error.contains(&format!("'{device}'", device = request.device))
+            }
+        }
+    }
+}
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub(crate) struct MemberPayload {
+    group: usize,
+    device: String,
+}
+
+///
+/// Remove a device from a group.
+///
+pub struct MemberRemover(BridgeRequest<MemberRemover>);
+add_wrapper_new!(MemberRemover, BridgeRequest);
+impl MemberRemover {
+    pub async fn run(&mut self, group: usize, device: &str) -> Result<(), Error> {
+        self.0
+            .request(MemberPayload {
+                group,
+                device: device.to_owned(),
+            })
+            .await?;
+        Ok(())
+    }
+}
+impl BridgeRequestType for MemberRemover {
+    const NAME: &'static str = "group/members/remove";
+    type Request = <MemberAdder as BridgeRequestType>::Request;
+    type Response = <MemberAdder as BridgeRequestType>::Response;
+
+    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+        <MemberAdder as BridgeRequestType>::matches(request, response)
+    }
+}
