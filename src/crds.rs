@@ -27,13 +27,16 @@ pub struct InstanceSpec {
     /// The host of the MQTT broker.
     #[garde(length(min = 1))]
     pub host: String,
+
     /// The port of the MQTT broker. Defaults to 1883.
     #[serde(default = "default_instance_port")]
     #[garde(range(min = 1, max = 65535))]
     pub port: u16,
+
     /// The credentials to authenticate with.
     #[garde(dive)]
     pub credentials: Option<InstanceSpecCredentials>,
+
     /// The base topic. Should match the mqtt.base_topic option of the Zigbee2MQTT instance. Defaults to the default used by Zigbee2MQTT ('zigbee2mqtt').
     #[serde(default = "default_instance_base_topic")]
     #[garde(ascii, length(min = 1))]
@@ -45,6 +48,7 @@ pub struct InstanceSpecCredentials {
     /// The username to authenticate with.
     #[garde(dive)]
     pub username: ValueFrom,
+
     /// The password to authenticate with.
     #[garde(dive)]
     pub password: ValueFrom,
@@ -54,6 +58,7 @@ pub struct InstanceSpecCredentials {
 pub struct InstanceStatus {
     /// Whether there is an active connection with the MQTT broker.
     pub broker: bool,
+
     /// Whether zigbee2mqtt is reachable and healthy.
     pub zigbee2mqtt: bool,
 }
@@ -87,12 +92,15 @@ pub struct DeviceSpec {
     #[serde(default = "default_instance")]
     #[garde(ascii, length(min = 1, max = 63))]
     pub instance: String,
+
     /// The device address.
     #[garde(ascii, length(min = 3))]
     pub ieee_address: String,
+
     /// Friendly name.
     #[garde(ascii, length(min = 1))]
     pub friendly_name: Option<String>,
+
     /// The authorative options for the device.
     ///
     /// This is a combination of the common settings and the device specific settings, without `friendly_name`.
@@ -104,6 +112,7 @@ pub struct DeviceSpec {
     /// Note that unset/null and `{}` are different; the former will not manage options for this device at all while the latter will set all options to their default values.
     #[garde(skip)]
     pub options: Option<Map<String, Value>>,
+
     /// Capabilities to set.
     ///
     /// The available capabilities can be found in the 'Exposes' tab in the settings, with more details in the [supported devices listings](https://www.zigbee2mqtt.io/supported-devices/).
@@ -115,6 +124,7 @@ pub struct DeviceSpec {
 pub struct DeviceStatus {
     /// Whether the device is present.
     pub exists: Option<bool>,
+
     /// Whether the device is in the desired state.
     pub synced: Option<bool>,
 }
@@ -139,9 +149,11 @@ pub struct GroupSpec {
     #[serde(default = "default_instance")]
     #[garde(ascii, length(min = 1, max = 63))]
     pub instance: String,
+
     /// The name of the group.
     #[garde(ascii, length(min = 1))]
     pub friendly_name: String,
+
     /// The ID of the group.
     ///
     /// If not provided a random id will be generated for the group.
@@ -153,8 +165,10 @@ pub struct GroupSpec {
 pub struct GroupStatus {
     /// Whether the group exist.
     pub exists: Option<bool>,
+
     /// Whether the group is in the desired state.
     pub synced: Option<bool>,
+
     /// The group's ID.
     pub id: Option<usize>,
 }
@@ -165,8 +179,11 @@ pub struct GroupStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[allow(missing_docs)]
 pub enum ValueFrom {
+    /// An inline value.
     #[serde(rename = "value")]
     Inline(#[garde(length(min = 1))] String),
+
+    /// A value stored in a secret.
     #[serde(rename = "valueFrom", rename_all = "camelCase")]
     Secret {
         #[garde(dive)]
@@ -176,10 +193,17 @@ pub enum ValueFrom {
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[allow(missing_docs)]
 pub struct SecretKeyRef {
+    /// The namespace of the secret.
+    ///
+    /// If left empty the secret is assumed to be in the same namespace as the resource referring to it.
     #[garde(ascii, length(min = 1, max = 63))]
     namespace: Option<String>,
+
+    /// The name of the secret.
     #[garde(ascii, length(min = 1, max = 63))]
     name: String,
+
+    /// The key of the value in the secret's data to use.
     #[garde(ascii)]
     key: String,
 }
