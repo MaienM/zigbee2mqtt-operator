@@ -1,18 +1,18 @@
 //! Reconcile logic for [`Instance`].
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use kube::runtime::controller::Action;
+use kube::{api::ListParams, runtime::controller::Action, Api, ResourceExt};
 use tokio::{spawn, time::timeout};
 use tracing::{error_span, info_span};
 
 use crate::{
     background_task,
-    crds::Instance,
+    crds::{Device, Instance, InstanceHandleUnmanaged},
     error::{EmittableResult, EmittableResultFuture, Error},
     event_manager::{EventManager, EventType},
-    mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
+    mqtt::{BridgeDeviceType, ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
     status_manager::StatusManager,
     Context, EmittedError, EventCore, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL,
 };
@@ -23,7 +23,8 @@ impl Reconciler for Instance {
         let eventmanager = EventManager::new(ctx.client.clone(), self);
 
         let manager = self.setup_manager(&ctx, &eventmanager).await?;
-
+        self.find_unmanaged_devices(&ctx, &manager, &eventmanager)
+            .await?;
         self.restart_if_needed(&manager, &eventmanager).await?;
 
         Ok(Action::requeue(*RECONCILE_INTERVAL))
@@ -171,6 +172,65 @@ impl Instance {
         manager_awaitable.set(manager.clone()).await;
 
         Ok(manager)
+    }
+
+    async fn find_unmanaged_devices(
+        &self,
+        ctx: &Arc<Context>,
+        manager: &Arc<Manager>,
+        eventmanager: &EventManager,
+    ) -> Result<(), EmittedError> {
+        if self.spec.unmanaged_devices == InstanceHandleUnmanaged::Ignore {
+            return Ok(());
+        }
+
+        let from_k8s = async {
+            let api = Api::<Device>::namespaced(ctx.client.clone(), &self.namespace().unwrap());
+            let lp = ListParams::default();
+            api.list(&lp).await.map_err(|err| {
+                Error::ActionFailed(
+                    "failed to get list of devices".to_owned(),
+                    Some(Arc::new(Box::new(err))),
+                )
+            })
+        }
+        .emit_event(eventmanager, "")
+        .await?;
+        let from_k8s_addresses = from_k8s
+            .iter()
+            .filter(|d| d.spec.instance == self.name_any())
+            .map(|d| &d.spec.ieee_address)
+            .collect::<HashSet<_>>();
+
+        let from_z2m = manager
+            .get_bridge_device_tracker()
+            .emit_event_nopath(eventmanager)
+            .await?
+            .get_all()
+            .emit_event_nopath(eventmanager)
+            .await?;
+
+        for bridge_device in &from_z2m {
+            if bridge_device.type_ == BridgeDeviceType::Coordinator {
+                continue;
+            }
+            if !from_k8s_addresses.contains(&bridge_device.ieee_address) {
+                eventmanager
+                    .publish(EventCore {
+                        action: "Reconciling".to_string(),
+                        note: Some(format!(
+                            "Zigbee2MQTT has device {address} which is not defined in K8s.",
+                            address = bridge_device.ieee_address
+                        )),
+                        reason: "Created".to_string(),
+                        type_: EventType::Warning,
+                        field_path: None,
+                    })
+                    .await;
+            }
+        }
+
+        Ok(())
     }
 
     async fn restart_if_needed(

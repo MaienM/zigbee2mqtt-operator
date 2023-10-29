@@ -176,7 +176,7 @@ impl Device {
             .get_bridge_device_tracker()
             .emit_event(eventmanager, "spec.instance")
             .await?
-            .get(&self.spec.ieee_address)
+            .get_device(&self.spec.ieee_address)
             .emit_event(eventmanager, "spec.ieee_address")
             .await?;
         if info.friendly_name != wanted_friendly_name {

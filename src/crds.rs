@@ -41,6 +41,11 @@ pub struct InstanceSpec {
     #[serde(default = "default_instance_base_topic")]
     #[garde(ascii, length(min = 1))]
     pub base_topic: String,
+
+    /// What to do with devices that exist in Zigbee2MQTT but not in K8s.
+    #[serde(default)]
+    #[garde(skip)]
+    pub unmanaged_devices: InstanceHandleUnmanaged,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[allow(missing_docs)]
@@ -61,6 +66,17 @@ pub struct InstanceStatus {
 
     /// Whether zigbee2mqtt is reachable and healthy.
     pub zigbee2mqtt: bool,
+}
+/// How to handle a resource that exists in Zigbee2MQTT but not in K8s.
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, PartialEq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstanceHandleUnmanaged {
+    /// Ignore unmanaged resource.
+    Ignore,
+
+    /// Log unmanaged resource.
+    #[default]
+    Log,
 }
 fn default_instance_port() -> u16 {
     1883

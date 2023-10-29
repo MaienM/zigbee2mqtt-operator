@@ -4,7 +4,7 @@ mod lib;
 mod misc;
 
 pub use device::{
-    BridgeDevice, BridgeDevicesPayload, BridgeDevicesTracker,
+    BridgeDevice, BridgeDeviceType, BridgeDevicesPayload, BridgeDevicesTracker,
     CapabilitiesManager as DeviceCapabilitiesManager, OptionsManager as DeviceOptionsManager,
     Renamer as DeviceRenamer,
 };
