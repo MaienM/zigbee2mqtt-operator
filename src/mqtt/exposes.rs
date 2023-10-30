@@ -432,8 +432,8 @@ impl Processor for Composite {
         let Some(object) = value.as_object() else {
             return Err(InvalidValue::new("Must be an object."));
         };
-        for name in object.keys() {
-            if !self.features.knows_property(name) {
+        for (name, value) in object {
+            if !self.features.knows_property(name) && value != &Value::Null {
                 return Err(InvalidValue {
                     path: format!(".{name}"),
                     message: "Unknown property.".to_owned(),
@@ -1070,7 +1070,7 @@ mod tests {
 
         #[test]
         fn null() {
-            // Null value indicatee a field should be reset to default.
+            // Null value indicates a field should be reset to default.
             assert_roundtrip!(
                 EXPOSE,
                 json!({
@@ -1116,6 +1116,17 @@ mod tests {
                         "foo": 10,
                     },
                 })
+            );
+        }
+
+        #[test]
+        fn unknown_null() {
+            // Null value should be permitted for unknown fields so that these can be unset if they are somehow set by an outside process.
+            assert_roundtrip!(
+                EXPOSE,
+                json!({
+                    "unknown": null,
+                }),
             );
         }
 
