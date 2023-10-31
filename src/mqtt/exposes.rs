@@ -570,6 +570,39 @@ static COMMON_DEVICE_OPTIONS: Lazy<Vec<Schema>> = Lazy::new(|| {
     ]
 });
 
+/// The [group options](https://www.zigbee2mqtt.io/guide/usage/groups.html#configuration).
+static GROUP_OPTIONS: Lazy<Vec<Schema>> = Lazy::new(|| {
+    let type_bool = BinaryBuilder::default()
+        .value_on(true.into())
+        .value_off(false.into())
+        .build()
+        .unwrap();
+    vec![
+        Schema::Binary(WithProperty {
+            property: "retain".to_owned(),
+            type_: type_bool.clone(),
+        }),
+        Schema::Numeric(WithProperty {
+            property: "transition".to_owned(),
+            type_: NumericBuilder::default()
+                .value_min(Some(0.into()))
+                .build()
+                .unwrap(),
+        }),
+        Schema::Binary(WithProperty {
+            property: "optimistic".to_owned(),
+            type_: type_bool.clone(),
+        }),
+        Schema::Enum(WithProperty {
+            property: "off_state".to_owned(),
+            type_: EnumBuilder::default()
+                .values(vec!["all_members_off".into(), "last_member_state".into()])
+                .build()
+                .unwrap(),
+        }),
+    ]
+});
+
 /// Top-level schema.
 macro_rules! create_toplevel {
     (
@@ -577,9 +610,14 @@ macro_rules! create_toplevel {
         $name:ident, $extra:expr $(,)?
     ) => {
         $(#[$meta])*
-        #[derive(Clone, Debug, Default, Deserialize)]
+        #[derive(Clone, Debug, Deserialize)]
         #[serde(from = "Vec<Schema>")]
         pub struct $name(Composite);
+        impl Default for $name {
+            fn default() -> Self {
+                Vec::new().into()
+            }
+        }
         impl From<Vec<Schema>> for $name {
             fn from(mut value: Vec<Schema>) -> Self {
                 value.append($extra);
@@ -604,7 +642,12 @@ create_toplevel!(
 create_toplevel!(
     /// Schema for device capabilities.
     DeviceCapabilitiesSchema,
-    &mut vec![]
+    &mut vec![],
+);
+create_toplevel!(
+    /// Schema for group options.
+    GroupOptionsSchema,
+    &mut GROUP_OPTIONS.clone(),
 );
 
 #[cfg(test)]

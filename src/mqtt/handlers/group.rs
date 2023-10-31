@@ -1,15 +1,21 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::{
     super::manager::Manager,
     lib::{
-        add_wrapper_new, BridgeRequest, BridgeRequestType, RequestResponse, TopicTracker,
-        TopicTrackerType,
+        add_wrapper_new, setup_configuration_manager, BridgeRequest, BridgeRequestType,
+        Configuration, ConfigurationManager, ConfigurationManagerInner, RequestResponse,
+        TopicTracker, TopicTrackerType,
     },
 };
-use crate::error::Error;
+use crate::{
+    error::{EmittableResultFuture, EmittedError, Error},
+    event_manager::EventManager,
+    mqtt::exposes::{GroupOptionsSchema, Processor},
+};
 
 //
 // Track bridge group topic.
@@ -229,4 +235,90 @@ impl BridgeRequestType for MemberRemover {
     fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
         <MemberAdder as BridgeRequestType>::matches(request, response)
     }
+}
+
+///
+/// Manage group options.
+///
+pub struct OptionsManager {
+    manager: Arc<Manager>,
+    request_manager: BridgeRequest<OptionsManager>,
+    id: usize,
+}
+impl OptionsManager {
+    pub async fn new(manager: Arc<Manager>, id: usize) -> Result<Self, Error> {
+        Ok(Self {
+            manager: manager.clone(),
+            request_manager: BridgeRequest::new(manager).await?,
+            id,
+        })
+    }
+}
+setup_configuration_manager!(OptionsManager);
+#[async_trait]
+impl ConfigurationManagerInner for OptionsManager {
+    const NAME: &'static str = "option";
+    const PATH: &'static str = "spec.options";
+
+    async fn schema(
+        &mut self,
+        _eventmanager: &EventManager,
+    ) -> Result<Box<dyn Processor + Send + Sync>, EmittedError> {
+        Ok(Box::<GroupOptionsSchema>::default())
+    }
+
+    async fn get(&mut self, eventmanager: &EventManager) -> Result<Configuration, EmittedError> {
+        Ok(self
+            .manager
+            .get_bridge_info_tracker()
+            .emit_event_nopath(eventmanager)
+            .await?
+            .get()
+            .emit_event_nopath(eventmanager)
+            .await?
+            .config
+            .groups
+            .get(&self.id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn set(&mut self, configuration: &Configuration) -> Result<Configuration, Error> {
+        let value = self
+            .request_manager
+            .request(OptionsRequest {
+                id: self.id,
+                options: configuration.clone(),
+            })
+            .await?;
+        Ok(value.to)
+    }
+
+    fn clear_property(key: &str) -> bool {
+        !matches!(key, "friendly_name" | "devices")
+    }
+}
+impl BridgeRequestType for OptionsManager {
+    const NAME: &'static str = "group/options";
+    type Request = OptionsRequest;
+    type Response = OptionsResponse;
+
+    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+        match response {
+            RequestResponse::Ok { data } => data.id == request.id,
+            RequestResponse::Error { error } => {
+                error.contains(&format!("'{ieee_address}'", ieee_address = request.id))
+            }
+        }
+    }
+}
+#[derive(Serialize, Debug, Clone)]
+pub(crate) struct OptionsRequest {
+    id: usize,
+    options: Configuration,
+}
+#[derive(Deserialize)]
+pub(crate) struct OptionsResponse {
+    id: usize,
+    to: Configuration,
 }

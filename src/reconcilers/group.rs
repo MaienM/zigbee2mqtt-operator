@@ -20,7 +20,7 @@ use crate::{
 #[async_trait]
 impl Reconciler for Group {
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        let eventmanager = EventManager::new(ctx.client.clone(), self);
+        let mut eventmanager = EventManager::new(ctx.client.clone(), self);
         let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
 
         statusmanager.update(|s| {
@@ -45,6 +45,8 @@ impl Reconciler for Group {
 
         self.sync_name(&manager, &eventmanager, &group).await?;
         self.sync_members(&manager, &eventmanager, &group).await?;
+        self.sync_options(&manager, &mut eventmanager, &group)
+            .await?;
 
         statusmanager.update(|s| {
             s.synced = Some(true);
@@ -215,6 +217,25 @@ impl Group {
         }
 
         Ok(())
+    }
+
+    async fn sync_options(
+        &self,
+        manager: &Arc<Manager>,
+        eventmanager: &mut EventManager,
+        group: &BridgeGroup,
+    ) -> Result<(), EmittedError> {
+        let Some(ref wanted_options) = self.spec.options else {
+            return Ok(());
+        };
+
+        let mut options_manager = manager
+            .get_group_options_manager(group.id)
+            .emit_event(eventmanager, "status.id")
+            .await?;
+        options_manager
+            .sync(eventmanager, wanted_options.clone())
+            .await
     }
 
     async fn get_or_create_group(

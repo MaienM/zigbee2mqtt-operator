@@ -212,6 +212,14 @@ pub struct GroupSpec {
     /// `ieee_address`es or `friendly_name`s of [`Device`]s that should be a member of this group.
     #[garde(inner(inner(ascii, length(min = 1))))]
     pub members: Option<Vec<String>>,
+
+    /// The authorative options for the group.
+    ///
+    /// The available options can be found in [the groups section of the documentation](https://www.zigbee2mqtt.io/guide/usage/groups.html#configuration).
+    ///
+    /// Note that unset/null and `{}` are different; the former will not manage options for this group at all while the latter will set all options to their default values.
+    #[garde(skip)]
+    pub options: Option<Map<String, Value>>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
 #[allow(missing_docs)]

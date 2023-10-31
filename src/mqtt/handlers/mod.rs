@@ -11,6 +11,6 @@ pub use device::{
 pub use group::{
     BridgeGroup, BridgeGroupsPayload, BridgeGroupsTracker, Creator as GroupCreator,
     Deletor as GroupDeletor, MemberAdder as GroupMemberAdder, MemberRemover as GroupMemberRemover,
-    Renamer as GroupRenamer,
+    OptionsManager as GroupOptionsManager, Renamer as GroupRenamer,
 };
 pub use misc::{BridgeInfoPayload, BridgeInfoTracker, HealthChecker, Restarter};

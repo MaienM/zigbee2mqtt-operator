@@ -19,7 +19,7 @@ use super::{
     handlers::{
         BridgeDevicesTracker, BridgeGroupsTracker, BridgeInfoTracker, DeviceCapabilitiesManager,
         DeviceOptionsManager, DeviceRenamer, GroupCreator, GroupDeletor, GroupMemberAdder,
-        GroupMemberRemover, GroupRenamer, HealthChecker, Restarter,
+        GroupMemberRemover, GroupOptionsManager, GroupRenamer, HealthChecker, Restarter,
     },
     subscription::TopicSubscription,
 };
@@ -817,5 +817,12 @@ impl Manager {
             .await?
             .run(group, device)
             .await
+    }
+
+    pub async fn get_group_options_manager(
+        self: &Arc<Self>,
+        id: usize,
+    ) -> Result<GroupOptionsManager, Error> {
+        GroupOptionsManager::new(self.clone(), id).await
     }
 }

@@ -32,6 +32,7 @@ pub struct BridgeInfoPayload {
 #[derive(Deserialize, Debug, Clone)]
 pub struct BridgeInfoConfig {
     pub devices: HashMap<String, Map<String, Value>>,
+    pub groups: HashMap<usize, Map<String, Value>>,
 }
 
 ///
