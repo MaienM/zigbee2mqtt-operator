@@ -1,5 +1,6 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::{time::sleep, try_join};
@@ -12,11 +13,17 @@ use super::{
         subscription::TopicSubscription,
     },
     lib::{
-        add_wrapper_new, BridgeRequest, BridgeRequestType, RequestResponse, TopicTracker,
-        TopicTrackerType,
+        add_wrapper_new, setup_configuration_manager, BridgeRequest, BridgeRequestType,
+        Configuration, ConfigurationManager, ConfigurationManagerInner, RequestResponse,
+        TopicTracker, TopicTrackerType,
     },
 };
-use crate::{error::Error, mqtt::exposes::Processor, TIMEOUT};
+use crate::{
+    error::{EmittableResultFuture, EmittedError, Error},
+    event_manager::EventManager,
+    mqtt::exposes::Processor,
+    TIMEOUT,
+};
 
 //
 // Track bridge device topic.
@@ -157,13 +164,39 @@ impl OptionsManager {
             ieee_address,
         })
     }
+}
+setup_configuration_manager!(OptionsManager);
+#[async_trait]
+impl ConfigurationManagerInner for OptionsManager {
+    const NAME: &'static str = "option";
+    const PATH: &'static str = "spec.options";
 
-    pub async fn get(&mut self) -> Result<Map<String, Value>, Error> {
+    async fn schema(
+        &mut self,
+        eventmanager: &EventManager,
+    ) -> Result<Box<dyn Processor + Send + Sync>, EmittedError> {
+        Ok(Box::new(
+            self.manager
+                .get_bridge_device_tracker()
+                .emit_event_nopath(eventmanager)
+                .await?
+                .get_device(&self.ieee_address)
+                .emit_event(eventmanager, "spec.ieee_address")
+                .await?
+                .definition
+                .unwrap_or_default()
+                .options,
+        ))
+    }
+
+    async fn get(&mut self, eventmanager: &EventManager) -> Result<Configuration, EmittedError> {
         Ok(self
             .manager
             .get_bridge_info_tracker()
+            .emit_event_nopath(eventmanager)
             .await?
             .get()
+            .emit_event_nopath(eventmanager)
             .await?
             .config
             .devices
@@ -172,25 +205,19 @@ impl OptionsManager {
             .unwrap_or_default())
     }
 
-    pub async fn set(&mut self, options: &Map<String, Value>) -> Result<Map<String, Value>, Error> {
-        let device = self
-            .manager
-            .get_bridge_device_tracker()
-            .await?
-            .get_device(&self.ieee_address)
-            .await?
-            .definition
-            .unwrap_or_default();
-        let options = device.options.process(options.clone().into())?;
-
+    async fn set(&mut self, configuration: &Configuration) -> Result<Configuration, Error> {
         let value = self
             .request_manager
             .request(OptionsRequest {
                 id: self.ieee_address.clone(),
-                options,
+                options: configuration.clone(),
             })
             .await?;
         Ok(value.to)
+    }
+
+    fn clear_property(key: &str) -> bool {
+        !matches!(key, "friendly_name")
     }
 }
 impl BridgeRequestType for OptionsManager {
@@ -202,7 +229,7 @@ impl BridgeRequestType for OptionsManager {
         match response {
             RequestResponse::Ok { data } => data.id == request.id,
             RequestResponse::Error { error } => {
-                error.contains(&format!("'{ieee_address}'", ieee_address = request.id,))
+                error.contains(&format!("'{ieee_address}'", ieee_address = request.id))
             }
         }
     }
@@ -210,12 +237,12 @@ impl BridgeRequestType for OptionsManager {
 #[derive(Serialize, Debug, Clone)]
 pub(crate) struct OptionsRequest {
     id: String,
-    options: Value,
+    options: Configuration,
 }
 #[derive(Deserialize)]
 pub(crate) struct OptionsResponse {
     id: String,
-    to: Map<String, Value>,
+    to: Configuration,
 }
 
 ///
@@ -318,25 +345,41 @@ impl CapabilitiesManager {
             }),
         }.unwrap_err()
     }
+}
+setup_configuration_manager!(CapabilitiesManager);
+#[async_trait]
+impl ConfigurationManagerInner for CapabilitiesManager {
+    const NAME: &'static str = "capability";
+    const PATH: &'static str = "spec.capabilities";
 
-    pub async fn get(&mut self) -> Result<CapabilitiesPayload, Error> {
-        self.run("get", r#"{"state":""}"#).await
+    async fn schema(
+        &mut self,
+        eventmanager: &EventManager,
+    ) -> Result<Box<dyn Processor + Send + Sync>, EmittedError> {
+        Ok(Box::new(
+            self.manager
+                .get_bridge_device_tracker()
+                .emit_event_nopath(eventmanager)
+                .await?
+                .get_device(&self.ieee_address)
+                .emit_event(eventmanager, "spec.ieee_address")
+                .await?
+                .definition
+                .unwrap_or_default()
+                .exposes,
+        ))
     }
 
-    pub async fn set(&mut self, capabilities: Value) -> Result<CapabilitiesPayload, Error> {
-        let device = self
-            .manager
-            .get_bridge_device_tracker()
-            .await?
-            .get_device(&self.ieee_address)
-            .await?
-            .definition
-            .unwrap_or_default();
-        let capabilities = device.exposes.process(capabilities)?;
+    async fn get(&mut self, eventmanager: &EventManager) -> Result<Configuration, EmittedError> {
+        self.run("get", r#"{"state":""}"#)
+            .emit_event_nopath(eventmanager)
+            .await
+    }
 
+    async fn set(&mut self, configuration: &Configuration) -> Result<Configuration, Error> {
         self.run(
             "set",
-            serde_json::to_string(&capabilities).map_err(|err| {
+            serde_json::to_string(configuration).map_err(|err| {
                 Error::ActionFailed(
                     "Unable to convert capabilities to JSON.".to_owned(),
                     Some(Arc::new(Box::new(err))),
@@ -344,6 +387,10 @@ impl CapabilitiesManager {
             })?,
         )
         .await
+    }
+
+    fn clear_property(_key: &str) -> bool {
+        false
     }
 }
 type CapabilitiesPayload = Map<String, Value>;

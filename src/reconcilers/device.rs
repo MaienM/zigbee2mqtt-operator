@@ -3,119 +3,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use futures::Future;
 use kube::{runtime::controller::Action, ResourceExt};
-use serde_json::{Map, Value};
 
 use crate::{
     crds::Device,
-    error::{EmittableResult, EmittableResultFuture, Error},
+    error::EmittableResultFuture,
     event_manager::{EventCore, EventManager, EventType},
     mqtt::Manager,
     status_manager::StatusManager,
     Context, EmittedError, Reconciler, RECONCILE_INTERVAL, TIMEOUT,
 };
-
-struct Difference {
-    key: String,
-    wanted: String,
-    actual: String,
-}
-fn find_differences(wanted: &Map<String, Value>, actual: &Map<String, Value>) -> Vec<Difference> {
-    let mut differences = Vec::new();
-    for key in wanted.keys() {
-        let (wanted, actual) = match (wanted.get(key), actual.get(key)) {
-            (None | Some(Value::Null), None | Some(Value::Null)) => {
-                continue;
-            }
-            (None | Some(Value::Null), Some(actual)) => (
-                "default value".to_string(),
-                serde_json::to_string(actual).unwrap_or_else(|_| actual.to_string()),
-            ),
-            (Some(wanted), None | Some(Value::Null)) => (
-                serde_json::to_string(wanted).unwrap_or_else(|_| wanted.to_string()),
-                "default value".to_string(),
-            ),
-            (Some(wanted), Some(actual)) => {
-                if wanted == actual {
-                    continue;
-                }
-                (
-                    serde_json::to_string(wanted).unwrap_or_else(|_| wanted.to_string()),
-                    serde_json::to_string(actual).unwrap_or_else(|_| actual.to_string()),
-                )
-            }
-        };
-        differences.push(Difference {
-            key: key.clone(),
-            wanted,
-            actual,
-        });
-    }
-    differences
-}
-
-async fn do_sync<F>(
-    eventmanager: &mut EventManager,
-    name: &str,
-    field_path: &str,
-    wanted: &Map<String, Value>,
-    actual: &Map<String, Value>,
-    apply: impl FnOnce() -> F,
-) -> Result<(), EmittedError>
-where
-    F: Future<Output = Result<Map<String, Value>, Error>> + Send,
-{
-    let differences = find_differences(wanted, actual);
-    for difference in &differences {
-        eventmanager
-            .publish(EventCore {
-                action: "Reconciling".to_string(),
-                note: Some(format!(
-                    "setting {name} {key} to {wanted} (previously {actual})",
-                    key = difference.key,
-                    wanted = difference.wanted,
-                    actual = difference.actual,
-                )),
-                reason: "Created".to_string(),
-                type_: EventType::Normal,
-                field_path: Some(format!("{}.{}", field_path, difference.key)),
-            })
-            .await;
-    }
-    if differences.is_empty() {
-        return Ok(());
-    }
-
-    let result = apply().emit_event(eventmanager, field_path).await?;
-    let differences = find_differences(wanted, &result);
-    for difference in &differences {
-        let Difference {
-            key,
-            wanted,
-            actual,
-        } = difference;
-        eventmanager
-            .publish(EventCore {
-                action: "Reconciling".to_string(),
-                note: Some(format!(
-                    "unexpected result of setting {name} {key}, expected {wanted} but got {actual}",
-                )),
-                reason: "Created".to_string(),
-                type_: EventType::Warning,
-                field_path: Some(format!("{field_path}.{key}")),
-            })
-            .await;
-    }
-    if !differences.is_empty() {
-        return Err(Error::InvalidResource {
-            field_path: String::new(),
-            message: format!("failed to set at least one {name}"),
-        })
-        .fake_emit_event();
-    }
-    Ok(())
-}
 
 #[async_trait]
 impl Reconciler for Device {
@@ -213,30 +110,9 @@ impl Device {
             .get_device_options_manager(self.spec.ieee_address.clone())
             .emit_event(eventmanager, "spec.ieee_address")
             .await?;
-        let current_options = options_manager
-            .get()
-            .emit_event(eventmanager, "spec.ieee_address")
-            .await?;
-
-        // Set all options that are currently set but which are not present in the spec to null as this will restore them to their default values.
-        let mut wanted_options = wanted_options.clone();
-        for key in current_options.keys() {
-            if key == "friendly_name" {
-                continue;
-            }
-            wanted_options.entry(key.clone()).or_insert(Value::Null);
-        }
-
-        do_sync(
-            eventmanager,
-            "option",
-            "spec.options",
-            &wanted_options,
-            &current_options,
-            || options_manager.set(&wanted_options),
-        )
-        .await?;
-        Ok(())
+        options_manager
+            .sync(eventmanager, wanted_options.clone())
+            .await
     }
 
     async fn sync_capabilities(
@@ -253,20 +129,8 @@ impl Device {
             .get_device_capabilities_manager(self.spec.ieee_address.clone(), friendly_name)
             .emit_event(eventmanager, "spec.friendly_name")
             .await?;
-        let current_capabilities = capabilities_manager
-            .get()
-            .emit_event(eventmanager, "spec.friendly_name")
-            .await?;
-
-        do_sync(
-            eventmanager,
-            "capability",
-            "spec.capabilities",
-            wanted_capabilities,
-            &current_capabilities,
-            || capabilities_manager.set(wanted_capabilities.clone().into()),
-        )
-        .await?;
-        Ok(())
+        capabilities_manager
+            .sync(eventmanager, wanted_capabilities.clone())
+            .await
     }
 }

@@ -1,14 +1,21 @@
 use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use tokio::{sync::Mutex, time::timeout};
 
 use super::super::{
     manager::Manager,
     subscription::{TopicStream, TopicSubscription},
 };
-use crate::{error::Error, TIMEOUT};
+use crate::{
+    error::{EmittableResult, EmittableResultFuture, EmittedError, Error},
+    event_manager::{EventManager, EventType},
+    mqtt::exposes::Processor,
+    EventCore, TIMEOUT,
+};
 
 ///
 /// Track the latest version of a retained message on a topic.
@@ -161,3 +168,186 @@ macro_rules! add_wrapper_new {
     };
 }
 pub(crate) use add_wrapper_new;
+
+///
+/// Configuration manager.
+///
+#[async_trait]
+pub(super) trait ConfigurationManagerInner {
+    /// The (singular) name of the category of configuration being managed.
+    const NAME: &'static str;
+
+    /// The [`EventCore::field_path`] for the configuration of the resource.
+    const PATH: &'static str;
+
+    /// Get the configuration schema.
+    async fn schema(
+        &mut self,
+        eventmanager: &EventManager,
+    ) -> Result<Box<dyn Processor + Send + Sync>, EmittedError>;
+
+    /// Get the current configuration.
+    async fn get(&mut self, eventmanager: &EventManager) -> Result<Configuration, EmittedError>;
+
+    /// Attempt to set the configuration and return the resulting configuration.
+    async fn set(&mut self, configuration: &Configuration) -> Result<Configuration, Error>;
+
+    /// Whether to set a property which is currently set but missing from the new configuration to null.
+    fn clear_property(key: &str) -> bool;
+}
+#[async_trait]
+pub(super) trait ConfigurationManager: ConfigurationManagerInner {
+    /// Update the configuration.
+    async fn sync(
+        &mut self,
+        eventmanager: &mut EventManager,
+        mut configuration: Configuration,
+    ) -> Result<(), EmittedError> {
+        // Get the current configuration.
+        let current = self.get(eventmanager).await?;
+
+        // Insert null for properties in the current configuration that should be cleared.
+        for key in current.keys() {
+            if Self::clear_property(key) {
+                configuration.entry(key.clone()).or_insert(Value::Null);
+            }
+        }
+
+        // Use schema to validate/process configuration.
+        let schema = self.schema(eventmanager).await?;
+        let configuration = schema
+            .process(configuration.into())
+            .map_err(Into::into)
+            .emit_event(eventmanager, Self::PATH)
+            .await?;
+        let configuration: Configuration = serde_json::from_value(configuration)
+            .map_err(|err| {
+                Error::ActionFailed(
+                    "processing configuration yielded non-object".to_owned(),
+                    Some(Arc::new(Box::new(err))),
+                )
+            })
+            .emit_event(eventmanager, Self::PATH)
+            .await?;
+
+        // Log what changes are going to be made.
+        let differences = find_differences(&configuration, &current);
+        for difference in &differences {
+            let Difference {
+                key,
+                wanted,
+                actual,
+            } = difference;
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(format!(
+                        "setting {name} {key} to {wanted} (previously {actual})",
+                        name = Self::NAME,
+                    )),
+                    reason: "Created".to_string(),
+                    type_: EventType::Normal,
+                    field_path: Some(format!("{}.{}", Self::PATH, difference.key)),
+                })
+                .await;
+        }
+        if differences.is_empty() {
+            return Ok(());
+        }
+
+        // Apply the configuration.
+        let result = self
+            .set(&configuration)
+            .emit_event(eventmanager, Self::PATH)
+            .await?;
+
+        // Verify that the result matches the desired configuration. If this is not the case, log the mismatches and return an error.
+        let differences = find_differences(&configuration, &result);
+        for difference in &differences {
+            let Difference {
+                key,
+                wanted,
+                actual,
+            } = difference;
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(format!(
+                        "unexpected result of setting {name} {key}, expected {wanted} but got {actual}",
+                        name = Self::NAME,
+                    )),
+                    reason: "Created".to_string(),
+                    type_: EventType::Warning,
+                    field_path: Some(format!("{path}.{key}", path=Self::PATH)),
+                })
+                .await;
+        }
+        if !differences.is_empty() {
+            return Err(Error::InvalidResource {
+                field_path: String::new(),
+                message: format!("failed to set at least one {name}", name = Self::NAME),
+            })
+            .fake_emit_event();
+        }
+
+        Ok(())
+    }
+}
+pub(crate) type Configuration = Map<String, Value>;
+struct Difference {
+    key: String,
+    wanted: String,
+    actual: String,
+}
+fn find_differences(wanted: &Configuration, actual: &Configuration) -> Vec<Difference> {
+    let mut differences = Vec::new();
+    for key in wanted.keys() {
+        let (wanted, actual) = match (wanted.get(key), actual.get(key)) {
+            (None | Some(Value::Null), None | Some(Value::Null)) => {
+                continue;
+            }
+            (None | Some(Value::Null), Some(actual)) => (
+                "default value".to_string(),
+                serde_json::to_string(actual).unwrap_or_else(|_| actual.to_string()),
+            ),
+            (Some(wanted), None | Some(Value::Null)) => (
+                serde_json::to_string(wanted).unwrap_or_else(|_| wanted.to_string()),
+                "default value".to_string(),
+            ),
+            (Some(wanted), Some(actual)) => {
+                if wanted == actual {
+                    continue;
+                }
+                (
+                    serde_json::to_string(wanted).unwrap_or_else(|_| wanted.to_string()),
+                    serde_json::to_string(actual).unwrap_or_else(|_| actual.to_string()),
+                )
+            }
+        };
+        differences.push(Difference {
+            key: key.clone(),
+            wanted,
+            actual,
+        });
+    }
+    differences
+}
+
+/// Implement `ConfigurationManager` for a struct.
+macro_rules! setup_configuration_manager {
+    ($name:ident) => {
+        #[async_trait]
+        impl ConfigurationManager for $name {
+        }
+        impl $name {
+            pub async fn sync(
+                &mut self,
+                eventmanager: &mut EventManager,
+                configuration: Configuration,
+            ) -> Result<(), EmittedError> {
+                ConfigurationManager::sync(self, eventmanager, configuration).await
+            }
+        }
+    };
+}
+pub(crate) use setup_configuration_manager;
