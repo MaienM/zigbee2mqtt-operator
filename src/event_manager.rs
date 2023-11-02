@@ -8,15 +8,14 @@ use k8s_openapi::{
     },
     apimachinery::pkg::apis::meta::v1::MicroTime,
     chrono::Utc,
-    NamespaceResourceScope,
 };
-use kube::{api::PostParams, core::ObjectMeta, Api, Client, Resource, ResourceExt};
+use kube::{api::PostParams, core::ObjectMeta, Api, Client};
 use serde::Serialize;
 use serde_json::json;
 use strum_macros::Display;
 use tracing::{error_span, info_span};
 
-use crate::{ResourceLocalExt, NAME};
+use crate::{ObjectReferenceLocalExt, NAME};
 
 pub trait EventExt {
     fn create(regarding: ObjectReference, core: EventCore) -> Self;
@@ -29,6 +28,7 @@ impl EventExt for Event {
             regarding.kind,
             regarding.namespace,
             regarding.name,
+            regarding.field_path,
             core.action,
             core.note,
             core.reason,
@@ -105,24 +105,18 @@ pub enum EventType {
 #[derive(Clone)]
 pub struct EventManager {
     api: Api<Event>,
-    id: String,
     regarding: ObjectReference,
 }
 impl EventManager {
-    pub fn new<T>(client: Client, regarding: &T) -> Self
-    where
-        T: Resource<Scope = NamespaceResourceScope>,
-        <T as Resource>::DynamicType: Default,
-    {
+    pub fn new(client: Client, regarding: ObjectReference) -> Self {
         Self {
-            api: Api::namespaced(client, &regarding.namespace().clone().unwrap()),
-            id: regarding.id(),
-            regarding: regarding.object_ref(&<T as Resource>::DynamicType::default()),
+            api: Api::namespaced(client, &regarding.namespace.clone().unwrap()),
+            regarding,
         }
     }
 
     pub async fn publish(&self, core: EventCore) {
-        info_span!("registering event", id=?self.id, ?core);
+        info_span!("registering event", id = ?self.regarding.id(), ?core);
         self.publish_nolog(core).await;
     }
 

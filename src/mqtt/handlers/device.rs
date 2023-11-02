@@ -19,9 +19,10 @@ use super::{
     },
 };
 use crate::{
-    error::{EmittableResultFuture, EmittedError, Error},
+    error::{Error, ErrorWithMeta},
     event_manager::EventManager,
     mqtt::exposes::Processor,
+    with_source::ValueWithSource,
     TIMEOUT,
 };
 
@@ -49,22 +50,20 @@ impl BridgeDevicesTracker {
             Some(device) => {
                 if !device.interview_completed {
                     Err(Error::ActionFailed(
-                        format!("device with ieee_address {ieee_address} is still being added to Zigbee2MQTT"),
+                        "device has not yet completed Zigbee2MQTT interview".to_owned(),
                         None,
                     ))
                 } else if !device.supported {
-                    Err(Error::InvalidResource {
-                        field_path: String::new(),
-                        message: "device is not supported by Zigbee2MQTT".to_string(),
-                    })
+                    Err(Error::InvalidResource(
+                        "device is not supported by Zigbee2MQTT".to_string(),
+                    ))
                 } else {
                     Ok(device)
                 }
             }
-            None => Err(Error::InvalidResource {
-                field_path: String::new(),
-                message: "device is not known to Zigbee2MQTT".to_string(),
-            }),
+            None => Err(Error::InvalidResource(
+                "device is not known to Zigbee2MQTT".to_string(),
+            )),
         }
     }
 }
@@ -112,11 +111,15 @@ pub struct BridgeDeviceDefinition {
 pub struct Renamer(BridgeRequest<Renamer>);
 add_wrapper_new!(Renamer, BridgeRequest);
 impl Renamer {
-    pub async fn run(&mut self, ieee_address: &str, friendly_name: &str) -> Result<(), Error> {
+    pub async fn run(
+        &mut self,
+        ieee_address: ValueWithSource<String>,
+        friendly_name: ValueWithSource<String>,
+    ) -> Result<(), ErrorWithMeta> {
         self.0
             .request(RenameRequest {
-                from: ieee_address.to_owned(),
-                to: friendly_name.to_owned(),
+                from: ieee_address,
+                to: friendly_name,
                 homeassistant_rename: true,
             })
             .await?;
@@ -128,19 +131,38 @@ impl BridgeRequestType for Renamer {
     type Request = RenameRequest;
     type Response = RenameResponse;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
         match response {
-            RequestResponse::Ok { data } => data.to == request.to,
-            RequestResponse::Error { error } => {
-                error.contains(&format!("'{name}'", name = request.to))
+            RequestResponse::Ok { ref data } => {
+                if data.to == *request.to {
+                    Some(response.into())
+                } else {
+                    None
+                }
+            }
+            RequestResponse::Error { ref error } => {
+                if error.contains(&format!("'{name}'", name = request.from)) {
+                    Some(
+                        response
+                            .convert()
+                            .map_err(|err| err.caused_by(&request.from)),
+                    )
+                } else if error.contains(&format!("'{name}'", name = request.to)) {
+                    Some(response.convert().map_err(|err| err.caused_by(&request.to)))
+                } else {
+                    None
+                }
             }
         }
     }
 }
 #[derive(Serialize, Debug, Clone)]
 pub(crate) struct RenameRequest {
-    from: String,
-    to: String,
+    from: ValueWithSource<String>,
+    to: ValueWithSource<String>,
     homeassistant_rename: bool,
 }
 #[derive(Deserialize)]
@@ -154,10 +176,13 @@ pub(crate) struct RenameResponse {
 pub struct OptionsManager {
     manager: Arc<Manager>,
     request_manager: BridgeRequest<OptionsManager>,
-    ieee_address: String,
+    ieee_address: ValueWithSource<String>,
 }
 impl OptionsManager {
-    pub async fn new(manager: Arc<Manager>, ieee_address: String) -> Result<Self, Error> {
+    pub async fn new(
+        manager: Arc<Manager>,
+        ieee_address: ValueWithSource<String>,
+    ) -> Result<Self, Error> {
         Ok(Self {
             manager: manager.clone(),
             request_manager: BridgeRequest::new(manager).await?,
@@ -169,43 +194,39 @@ setup_configuration_manager!(OptionsManager);
 #[async_trait]
 impl ConfigurationManagerInner for OptionsManager {
     const NAME: &'static str = "option";
-    const PATH: &'static str = "spec.options";
 
-    async fn schema(
-        &mut self,
-        eventmanager: &EventManager,
-    ) -> Result<Box<dyn Processor + Send + Sync>, EmittedError> {
+    async fn schema(&mut self) -> Result<Box<dyn Processor + Send + Sync>, ErrorWithMeta> {
         Ok(Box::new(
             self.manager
                 .get_bridge_device_tracker()
-                .emit_event_nopath(eventmanager)
                 .await?
                 .get_device(&self.ieee_address)
-                .emit_event(eventmanager, "spec.ieee_address")
-                .await?
+                .await
+                .map_err(|err| err.caused_by(&self.ieee_address))?
                 .definition
                 .unwrap_or_default()
                 .options,
         ))
     }
 
-    async fn get(&mut self, eventmanager: &EventManager) -> Result<Configuration, EmittedError> {
+    async fn get(&mut self) -> Result<Configuration, ErrorWithMeta> {
         Ok(self
             .manager
             .get_bridge_info_tracker()
-            .emit_event_nopath(eventmanager)
             .await?
             .get()
-            .emit_event_nopath(eventmanager)
             .await?
             .config
             .devices
-            .get(&self.ieee_address)
+            .get(&*self.ieee_address)
             .cloned()
             .unwrap_or_default())
     }
 
-    async fn set(&mut self, configuration: &Configuration) -> Result<Configuration, Error> {
+    async fn set(
+        &mut self,
+        configuration: &ValueWithSource<Configuration>,
+    ) -> Result<Configuration, ErrorWithMeta> {
         let value = self
             .request_manager
             .request(OptionsRequest {
@@ -225,19 +246,32 @@ impl BridgeRequestType for OptionsManager {
     type Request = OptionsRequest;
     type Response = OptionsResponse;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
         match response {
-            RequestResponse::Ok { data } => data.id == request.id,
-            RequestResponse::Error { error } => {
-                error.contains(&format!("'{ieee_address}'", ieee_address = request.id))
+            RequestResponse::Ok { ref data } => {
+                if data.id == *request.id {
+                    Some(response.into())
+                } else {
+                    None
+                }
+            }
+            RequestResponse::Error { ref error } => {
+                if error.contains(&format!("'{id}'", id = request.id)) {
+                    Some(response.convert().map_err(|err| err.caused_by(&request.id)))
+                } else {
+                    None
+                }
             }
         }
     }
 }
 #[derive(Serialize, Debug, Clone)]
 pub(crate) struct OptionsRequest {
-    id: String,
-    options: Configuration,
+    id: ValueWithSource<String>,
+    options: ValueWithSource<Configuration>,
 }
 #[derive(Deserialize)]
 pub(crate) struct OptionsResponse {
@@ -250,16 +284,16 @@ pub(crate) struct OptionsResponse {
 ///
 pub struct CapabilitiesManager {
     manager: Arc<Manager>,
-    ieee_address: String,
-    friendly_name: String,
+    ieee_address: ValueWithSource<String>,
+    friendly_name: ValueWithSource<String>,
     log_subscription: TopicSubscription,
     device_subscription: TopicSubscription,
 }
 impl CapabilitiesManager {
     pub async fn new(
         manager: Arc<Manager>,
-        ieee_address: String,
-        friendly_name: String,
+        ieee_address: ValueWithSource<String>,
+        friendly_name: ValueWithSource<String>,
     ) -> Result<Self, Error> {
         Ok(Self {
             log_subscription: manager.subscribe_topic("bridge/log", 16).await?,
@@ -293,7 +327,7 @@ impl CapabilitiesManager {
             .stream_swap()
             .map_lag_to_error()
             .parse_payload_or_skip::<CapabilitiesLogResponse>()
-            .filter_ok(|l| l.meta.friendly_name == self.friendly_name);
+            .filter_ok(|l| l.meta.friendly_name == *self.friendly_name);
 
         // We're using this try_join! in a similar way we would a select!, but with the advantage that not all branches need to cause a return (Ok => continue (until everyting is done, which will never happen here), Err => abort rest and return).
         macro_rules! terminating {
@@ -350,43 +384,41 @@ setup_configuration_manager!(CapabilitiesManager);
 #[async_trait]
 impl ConfigurationManagerInner for CapabilitiesManager {
     const NAME: &'static str = "capability";
-    const PATH: &'static str = "spec.capabilities";
 
-    async fn schema(
-        &mut self,
-        eventmanager: &EventManager,
-    ) -> Result<Box<dyn Processor + Send + Sync>, EmittedError> {
+    async fn schema(&mut self) -> Result<Box<dyn Processor + Send + Sync>, ErrorWithMeta> {
         Ok(Box::new(
             self.manager
                 .get_bridge_device_tracker()
-                .emit_event_nopath(eventmanager)
                 .await?
                 .get_device(&self.ieee_address)
-                .emit_event(eventmanager, "spec.ieee_address")
-                .await?
+                .await
+                .map_err(|err| err.caused_by(&self.ieee_address))?
                 .definition
                 .unwrap_or_default()
                 .exposes,
         ))
     }
 
-    async fn get(&mut self, eventmanager: &EventManager) -> Result<Configuration, EmittedError> {
-        self.run("get", r#"{"state":""}"#)
-            .emit_event_nopath(eventmanager)
-            .await
+    async fn get(&mut self) -> Result<Configuration, ErrorWithMeta> {
+        Ok(self.run("get", r#"{"state":""}"#).await?)
     }
 
-    async fn set(&mut self, configuration: &Configuration) -> Result<Configuration, Error> {
+    async fn set(
+        &mut self,
+        configuration: &ValueWithSource<Configuration>,
+    ) -> Result<Configuration, ErrorWithMeta> {
         self.run(
             "set",
             serde_json::to_string(configuration).map_err(|err| {
                 Error::ActionFailed(
-                    "Unable to convert capabilities to JSON.".to_owned(),
+                    "failed to convert capabilities to JSON".to_owned(),
                     Some(Arc::new(Box::new(err))),
                 )
+                .caused_by(configuration)
             })?,
         )
         .await
+        .map_err(|err| err.caused_by(configuration))
     }
 
     fn clear_property(_key: &str) -> bool {

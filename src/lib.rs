@@ -6,9 +6,10 @@
 use std::{env, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use error::EmittedError;
+use error::ErrorWithMeta;
 pub use event_manager::EventCore;
-use kube::{core::object::HasStatus, runtime::controller::Action, Client, Resource, ResourceExt};
+use k8s_openapi::api::core::v1::ObjectReference;
+use kube::{core::object::HasStatus, runtime::controller::Action, Client, Resource};
 use mqtt::Manager;
 use once_cell::sync::Lazy;
 use sync_utils::AwaitableMap;
@@ -20,6 +21,7 @@ mod mqtt;
 mod reconcilers;
 mod status_manager;
 mod sync_utils;
+mod with_source;
 
 static NAME: Lazy<String> = Lazy::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
 
@@ -72,9 +74,9 @@ impl Default for State {
 #[async_trait]
 pub trait Reconciler: Resource + HasStatus + Sized {
     /// Handler for [`kube::runtime::finalizer::Event::Apply`].
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError>;
+    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta>;
     /// Handler for [`kube::runtime::finalizer::Event::Cleanup`].
-    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, EmittedError>;
+    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta>;
 }
 
 /// Wrap an async block that is expected to run forever.
@@ -102,30 +104,44 @@ pub(crate) use background_task;
 
 /// Utility functions for [`Resource`]s.
 pub trait ResourceLocalExt {
-    /// Get the name including the namespace for this resource.
-    fn full_name(&self) -> String;
-    /// Get a string that uniquely represent this resouce in the form of `{api_version}/{kind}/{full_name}`.
-    fn id(&self) -> String;
+    /// Generates an object reference for the resource.
+    ///
+    /// Like [`Resource::object_ref`], but easier to use.
+    fn get_ref(&self) -> ObjectReference;
 }
 impl<T> ResourceLocalExt for T
 where
     T: Resource,
     <T as Resource>::DynamicType: Default,
 {
+    fn get_ref(&self) -> ObjectReference {
+        let dt = <Self as Resource>::DynamicType::default();
+        self.object_ref(&dt)
+    }
+}
+
+/// Utility functions for [`ObjectReference`]s.
+pub trait ObjectReferenceLocalExt {
+    /// Get the name including the namespace for this resource.
+    fn full_name(&self) -> String;
+
+    /// Get a string that uniquely represent this resouce in the form of `{api_version}/{kind}/{full_name}`.
+    fn id(&self) -> String;
+}
+impl ObjectReferenceLocalExt for ObjectReference {
     fn full_name(&self) -> String {
-        let name = self.name_any();
-        match self.namespace() {
+        let name = self.name.as_ref().unwrap();
+        match &self.namespace {
             Some(namespace) => format!("{namespace}/{name}"),
-            None => name,
+            None => name.clone(),
         }
     }
 
     fn id(&self) -> String {
-        let dt = <Self as Resource>::DynamicType::default();
         format!(
             "{api_version}/{kind}/{full_name}",
-            api_version = Self::api_version(&dt),
-            kind = Self::kind(&dt),
+            api_version = self.api_version.as_ref().unwrap(),
+            kind = self.kind.as_ref().unwrap(),
             full_name = self.full_name(),
         )
     }

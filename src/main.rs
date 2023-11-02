@@ -21,8 +21,9 @@ use tokio::join;
 use tracing::{error_span, info_span};
 use zigbee2mqtt_operator::{
     crds::{Device, Group, Instance},
-    error::Error,
-    Context, Reconciler, ResourceLocalExt, State, RECONCILE_INTERVAL_FAILURE,
+    error::{Error, ErrorWithMetaFinalizer},
+    Context, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt, State,
+    RECONCILE_INTERVAL_FAILURE,
 };
 
 pub static FINALIZER: &str = "zigbee2mqtt.maienm.com";
@@ -48,11 +49,11 @@ where
         match event {
             Finalizer::Apply(doc) => {
                 let result = doc.reconcile(ctx.clone()).await;
-                result.map_err(|err| err.0)
+                result.publish_unwrap_error(&ctx, doc.get_ref()).await
             }
             Finalizer::Cleanup(doc) => {
                 let result = doc.cleanup(ctx.clone()).await;
-                result.map_err(|err| err.0)
+                result.publish_unwrap_error(&ctx, doc.get_ref()).await
             }
         }
     })
@@ -67,7 +68,7 @@ where
 {
     error_span!(
         "reconcile failed",
-        id = resource.id(),
+        id = resource.get_ref().id(),
         err = ?error,
     );
     Action::requeue(*RECONCILE_INTERVAL_FAILURE)

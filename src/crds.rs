@@ -13,7 +13,11 @@ use schemars::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::{error::Error, ResourceLocalExt};
+use crate::{
+    error::{Error, ErrorWithMeta},
+    with_source::ValueWithSource,
+    ResourceLocalExt,
+};
 
 ///
 /// A Zigbee2MQTT instance.
@@ -113,7 +117,7 @@ fn default_instance() -> String {
 /// Trait for CRDs that belong to a specific [`Instance`].
 pub trait Instanced {
     /// Get the name of the instance this resource belongs to, in the format of [`ResourceLocalExt::full_name`].
-    fn get_instance_fullname(&self) -> String;
+    fn get_instance_fullname(&self) -> ValueWithSource<String>;
 }
 
 ///
@@ -173,8 +177,11 @@ pub struct DeviceStatus {
     pub synced: Option<bool>,
 }
 impl Instanced for Device {
-    fn get_instance_fullname(&self) -> String {
-        format!("{}/{}", self.namespace().unwrap(), self.spec.instance)
+    fn get_instance_fullname(&self) -> ValueWithSource<String> {
+        ValueWithSource::new(
+            format!("{}/{}", self.namespace().unwrap(), self.spec.instance),
+            Some("spec.instance".to_owned()),
+        )
     }
 }
 
@@ -234,8 +241,11 @@ pub struct GroupStatus {
     pub id: Option<usize>,
 }
 impl Instanced for Group {
-    fn get_instance_fullname(&self) -> String {
-        format!("{}/{}", self.namespace().unwrap(), self.spec.instance)
+    fn get_instance_fullname(&self) -> ValueWithSource<String> {
+        ValueWithSource::new(
+            format!("{}/{}", self.namespace().unwrap(), self.spec.instance),
+            Some("spec.instance".to_owned()),
+        )
     }
 }
 
@@ -273,36 +283,34 @@ pub struct SecretKeyRef {
     #[garde(ascii)]
     key: String,
 }
-impl ValueFrom {
+impl ValueWithSource<ValueFrom> {
     /// Get the current value.
     ///
     /// # Errors
     ///
     /// Will return [`Error`] if the value contains a reference that cannot be resolved.
-    pub async fn get<T>(&self, client: &Client, resource: &T) -> Result<String, Error>
+    pub async fn get<T>(
+        &self,
+        client: &Client,
+        resource: &T,
+    ) -> Result<ValueWithSource<String>, ErrorWithMeta>
     where
         T: Resource<Scope = NamespaceResourceScope> + ResourceLocalExt,
     {
-        match self {
-            ValueFrom::Inline(v) => Ok(v.clone()),
+        match &**self {
+            ValueFrom::Inline(v) => Ok(self.with_value(v.clone())),
             ValueFrom::Secret {
                 secret_key_ref: skr,
             } => {
-                let namespace = &*skr
+                let namespace = skr
                     .namespace
                     .as_ref()
                     .cloned()
                     .or_else(|| resource.namespace().clone())
-                    .ok_or_else(|| Error::InvalidResource {
-                        field_path: ".namespace".to_string(),
-                        message: format!(
-                            "parent resource {id} does not have a namespace, so reference must specify namespace",
-                            id=resource.id(),
-                        )
-                    })?
-                    .to_string();
-                let key = &skr.key;
-                let secret = Api::<Secret>::namespaced(client.clone(), namespace)
+                    .ok_or_else(||
+                        Error::InvalidResource("resource does not have a namespace, so reference must specify namespace".to_owned()).caused_by(&self.sub((), ".secretKeyRef.namespace"))
+                    )?;
+                let secret = Api::<Secret>::namespaced(client.clone(), &namespace)
                     .get(&skr.name)
                     .await
                     .map_err(|err| {
@@ -310,22 +318,25 @@ impl ValueFrom {
                             "failed to get secret".to_string(),
                             Some(Arc::new(Box::new(err))),
                         )
+                        .caused_by(&self.sub((), ".secretKeyRef"))
                     })?;
-                secret
+                let value = secret
                     .data
                     .unwrap_or_default()
                     .get(&skr.key)
                     .map(|d| from_utf8(&d.0).map(str::to_string))
-                    .ok_or(Error::InvalidResource {
-                        field_path: ".key".to_string(),
-                        message: format!("secret does not have data with {key}"),
-                    })?
+                    .ok_or(
+                        Error::InvalidResource("secret does not have data for this key".to_owned())
+                            .caused_by(&self.sub((), ".secretKeyRef.key")),
+                    )?
                     .map_err(|err| {
                         Error::ActionFailed(
-                            "failed to parse secret data".to_string(),
+                            "failed to parse secret data for this key".to_string(),
                             Some(Arc::new(Box::new(err))),
                         )
-                    })
+                        .caused_by(&self.sub((), ".secretKeyRef.key"))
+                    })?;
+                Ok(self.with_value(value))
             }
         }
     }

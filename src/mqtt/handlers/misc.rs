@@ -8,7 +8,7 @@ use super::lib::{
     add_wrapper_new, BridgeRequest, BridgeRequestType, RequestResponse, TopicTracker,
     TopicTrackerType,
 };
-use crate::error::Error;
+use crate::error::{Error, ErrorWithMeta};
 
 //
 // Track bridge info topic.
@@ -41,7 +41,7 @@ pub struct BridgeInfoConfig {
 pub struct HealthChecker(BridgeRequest<HealthChecker>);
 add_wrapper_new!(HealthChecker, BridgeRequest);
 impl HealthChecker {
-    pub async fn get(&mut self) -> Result<(), Error> {
+    pub async fn get(&mut self) -> Result<(), ErrorWithMeta> {
         let data = self.0.request(Map::new()).await?;
         if data.healthy {
             Ok(())
@@ -49,7 +49,7 @@ impl HealthChecker {
             Err(Error::ActionFailed(
                 "received unhealthy response".to_string(),
                 None,
-            ))
+            ))?
         }
     }
 }
@@ -58,8 +58,11 @@ impl BridgeRequestType for HealthChecker {
     type Request = Map<String, Value>;
     type Response = HealthcheckResponse;
 
-    fn matches(_request: &Self::Request, _response: &RequestResponse<Self::Response>) -> bool {
-        true
+    fn process_response(
+        _request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
+        Some(response.into())
     }
 }
 #[derive(Deserialize)]
@@ -73,7 +76,7 @@ pub(crate) struct HealthcheckResponse {
 pub struct Restarter(BridgeRequest<Restarter>);
 add_wrapper_new!(Restarter, BridgeRequest);
 impl Restarter {
-    pub async fn run(&mut self) -> Result<(), Error> {
+    pub async fn run(&mut self) -> Result<(), ErrorWithMeta> {
         self.0.request(Map::new()).await?;
         Ok(())
     }
@@ -83,7 +86,10 @@ impl BridgeRequestType for Restarter {
     type Request = Map<String, Value>;
     type Response = Map<String, Value>;
 
-    fn matches(_request: &Self::Request, _response: &RequestResponse<Self::Response>) -> bool {
-        true
+    fn process_response(
+        _request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
+        Some(response.into())
     }
 }

@@ -6,21 +6,27 @@ use std::{
 };
 
 use async_trait::async_trait;
-use kube::{runtime::controller::Action, ResourceExt};
+use kube::runtime::controller::Action;
 
 use crate::{
-    crds::{Group, GroupStatus},
-    error::{EmittableResult, EmittableResultFuture, Error},
+    crds::{Group, Instanced},
+    error::Error,
     event_manager::{EventManager, EventType},
     mqtt::{BridgeGroup, Manager},
     status_manager::StatusManager,
-    Context, EmittedError, EventCore, Reconciler, RECONCILE_INTERVAL, TIMEOUT,
+    with_source::{vws, vws_sub, ValueWithSource},
+    Context, ErrorWithMeta, EventCore, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL, TIMEOUT,
 };
+
+struct BridgeGroupInfo {
+    pub id: ValueWithSource<usize>,
+    pub info: BridgeGroup,
+}
 
 #[async_trait]
 impl Reconciler for Group {
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        let mut eventmanager = EventManager::new(ctx.client.clone(), self);
+    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+        let eventmanager = EventManager::new(ctx.client.clone(), self.get_ref());
         let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
 
         statusmanager.update(|s| {
@@ -29,7 +35,7 @@ impl Reconciler for Group {
             s.id = None;
         });
 
-        let manager = self.get_manager(&ctx, &eventmanager).await?;
+        let manager = self.get_manager(&ctx).await?;
 
         statusmanager.update(|s| {
             s.exists = Some(false);
@@ -39,14 +45,13 @@ impl Reconciler for Group {
 
         statusmanager.update(|s| {
             s.exists = Some(true);
-            s.id = Some(group.id);
+            s.id = Some(*group.id);
             s.synced = Some(false);
         });
 
-        self.sync_name(&manager, &eventmanager, &group).await?;
+        self.sync_name(&manager, &group).await?;
         self.sync_members(&manager, &eventmanager, &group).await?;
-        self.sync_options(&manager, &mut eventmanager, &group)
-            .await?;
+        self.sync_options(&manager, &eventmanager, &group).await?;
 
         statusmanager.update(|s| {
             s.synced = Some(true);
@@ -55,52 +60,85 @@ impl Reconciler for Group {
         Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 
-    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        let eventmanager = EventManager::new(ctx.client.clone(), self);
-        let manager = self.get_manager(&ctx, &eventmanager).await?;
+    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+        let manager = self.get_manager(&ctx).await?;
 
-        if let Some(GroupStatus { id: Some(id), .. }) = self.status {
-            manager
-                .delete_group(id)
-                .emit_event(&eventmanager, "status.id")
-                .await?;
+        if let Some(status) = vws!(self.status).transpose() {
+            if let Some(id) = vws_sub!(status.id).transpose() {
+                manager.delete_group(id).await?;
+            }
         }
 
         Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 }
 impl Group {
-    fn get_id(&self) -> Option<(&str, usize)> {
+    fn get_id(&self) -> Option<ValueWithSource<usize>> {
         let from_status = self
             .status
             .as_ref()
             .and_then(|s| s.id)
-            .map(|id| ("status.id", id));
-        let from_spec = self.spec.id.map(|id| ("spec.id", id));
+            .map(|id| ValueWithSource::new(id, Some("status.id".to_owned())));
+        let from_spec = vws!(self.spec.id).transpose();
         from_status.or(from_spec)
     }
 
-    async fn get_manager(
-        &self,
-        ctx: &Arc<Context>,
-        eventmanager: &EventManager,
-    ) -> Result<Arc<Manager>, EmittedError> {
-        let instance = format!("{}/{}", self.namespace().unwrap(), self.spec.instance);
+    async fn get_manager(&self, ctx: &Arc<Context>) -> Result<Arc<Manager>, ErrorWithMeta> {
+        let instance = self.get_instance_fullname();
         ctx.state
             .managers
             .get(&instance, *TIMEOUT)
-            .emit_event(eventmanager, "spec.instance")
             .await
+            .map_err(|err| err.caused_by(&instance))
+    }
+
+    async fn get_or_create_group(
+        &self,
+        manager: &Arc<Manager>,
+    ) -> Result<BridgeGroupInfo, ErrorWithMeta> {
+        let mut group: Option<BridgeGroupInfo> = None;
+        let tracker = manager.get_bridge_group_tracker().await?;
+        if let Some(id) = self.get_id() {
+            group = tracker
+                .get_by_id(*id)
+                .await?
+                .map(|info| BridgeGroupInfo { id, info });
+        }
+        if group.is_none() && self.spec.id.is_none() {
+            group = tracker
+                .get_by_friendly_name(&self.spec.friendly_name)
+                .await?
+                .map(|info| BridgeGroupInfo {
+                    id: ValueWithSource::new(info.id, Some("status.id".to_owned())),
+                    info,
+                });
+        }
+        if group.is_none() {
+            let id = manager
+                .create_group(vws!(self.spec.id), vws!(self.spec.friendly_name))
+                .await?;
+            group = tracker.get_by_id(id).await?.map(|info| BridgeGroupInfo {
+                id: ValueWithSource::new(info.id, Some("status.id".to_owned())),
+                info,
+            });
+        }
+        let Some(group) = group else {
+            return Err(Error::ActionFailed(
+                "failed to find or create group".to_owned(),
+                None,
+            ))?;
+        };
+        Ok(group)
     }
 
     async fn sync_existence(
         &self,
         manager: &Arc<Manager>,
         eventmanager: &EventManager,
-    ) -> Result<BridgeGroup, EmittedError> {
-        let mut group = self.get_or_create_group(manager, eventmanager).await?;
-        if let Some(id) = self.spec.id {
-            if id != group.id {
+    ) -> Result<BridgeGroupInfo, ErrorWithMeta> {
+        let mut group = self.get_or_create_group(manager).await?;
+        if let Some(id) = vws!(self.spec.id).transpose() {
+            if *id != *group.id {
                 eventmanager
                     .publish(EventCore {
                         action: "Reconciling".to_string(),
@@ -110,11 +148,8 @@ impl Group {
                         field_path: Some("spec.id".to_owned()),
                     })
                     .await;
-                manager
-                    .delete_group(group.id)
-                    .emit_event(eventmanager, "spec.id")
-                    .await?;
-                group = self.get_or_create_group(manager, eventmanager).await?;
+                manager.delete_group(group.id).await?;
+                group = self.get_or_create_group(manager).await?;
             }
         }
         Ok(group)
@@ -123,13 +158,12 @@ impl Group {
     async fn sync_name(
         &self,
         manager: &Arc<Manager>,
-        eventmanager: &EventManager,
-        group: &BridgeGroup,
-    ) -> Result<(), EmittedError> {
-        if group.friendly_name != self.spec.friendly_name {
+        group: &BridgeGroupInfo,
+    ) -> Result<(), ErrorWithMeta> {
+        let friendly_name = vws!(self.spec.friendly_name);
+        if group.info.friendly_name != *friendly_name {
             manager
-                .rename_group(group.id, &self.spec.friendly_name)
-                .emit_event(eventmanager, "spec.friendly_name")
+                .rename_group(group.id.clone(), friendly_name)
                 .await?;
         }
         Ok(())
@@ -139,18 +173,16 @@ impl Group {
         &self,
         manager: &Arc<Manager>,
         eventmanager: &EventManager,
-        group: &BridgeGroup,
-    ) -> Result<(), EmittedError> {
-        let Some(ref members) = self.spec.members else {
+        group: &BridgeGroupInfo,
+    ) -> Result<(), ErrorWithMeta> {
+        let Some(ref members) = vws!(self.spec.members).transpose() else {
             return Ok(());
         };
 
         let devices: HashMap<String, String> = manager
             .get_bridge_device_tracker()
-            .emit_event_nopath(eventmanager)
             .await?
             .get_all()
-            .emit_event_nopath(eventmanager)
             .await?
             .into_iter()
             .flat_map(|d| {
@@ -163,25 +195,25 @@ impl Group {
 
         let mut wanted = HashSet::new();
         for member in members {
-            match devices.get(member) {
+            match devices.get(*member) {
                 Some(address) => {
-                    wanted.insert(address.clone());
+                    wanted.insert(member.with_value(address.clone()));
                 }
                 None => {
                     return Err(Error::ActionFailed(
                         format!("cannot find device with ieee_address or friendly_name '{member}'"),
                         None,
-                    ))
-                    .emit_event(eventmanager, "spec.members")
-                    .await;
+                    )
+                    .caused_by(&member));
                 }
             }
         }
 
-        let current: HashSet<_> = group
+        let current: HashSet<ValueWithSource<_>> = group
+            .info
             .members
             .iter()
-            .map(|m| m.ieee_address.clone())
+            .map(|m| m.ieee_address.clone().into())
             .collect();
 
         for address in current.difference(&wanted) {
@@ -195,8 +227,7 @@ impl Group {
                 })
                 .await;
             manager
-                .remove_group_member(group.id, address)
-                .emit_event(eventmanager, "spec.members")
+                .remove_group_member(group.id.clone(), address.clone())
                 .await?;
         }
 
@@ -207,12 +238,11 @@ impl Group {
                     note: Some(format!("adding device {address} to group")),
                     reason: "Changed".to_string(),
                     type_: EventType::Normal,
-                    field_path: Some("spec.members".to_owned()),
+                    field_path: address.source().cloned(),
                 })
                 .await;
             manager
-                .add_group_member(group.id, address)
-                .emit_event(eventmanager, "spec.members")
+                .add_group_member(group.id.clone(), address.clone())
                 .await?;
         }
 
@@ -222,62 +252,16 @@ impl Group {
     async fn sync_options(
         &self,
         manager: &Arc<Manager>,
-        eventmanager: &mut EventManager,
-        group: &BridgeGroup,
-    ) -> Result<(), EmittedError> {
-        let Some(ref wanted_options) = self.spec.options else {
+        eventmanager: &EventManager,
+        group: &BridgeGroupInfo,
+    ) -> Result<(), ErrorWithMeta> {
+        let Some(ref wanted_options) = vws!(self.spec.options).transpose() else {
             return Ok(());
         };
 
-        let mut options_manager = manager
-            .get_group_options_manager(group.id)
-            .emit_event(eventmanager, "status.id")
-            .await?;
+        let mut options_manager = manager.get_group_options_manager(group.id.clone()).await?;
         options_manager
             .sync(eventmanager, wanted_options.clone())
             .await
-    }
-
-    async fn get_or_create_group(
-        &self,
-        manager: &Arc<Manager>,
-        eventmanager: &EventManager,
-    ) -> Result<BridgeGroup, EmittedError> {
-        let mut group: Option<BridgeGroup> = None;
-        let tracker = manager
-            .get_bridge_group_tracker()
-            .emit_event_nopath(eventmanager)
-            .await?;
-        if let Some((field_path, id)) = self.get_id() {
-            group = tracker
-                .get_by_id(id)
-                .emit_event(eventmanager, field_path)
-                .await?;
-        }
-        if group.is_none() && self.spec.id.is_none() {
-            group = tracker
-                .get_by_friendly_name(&self.spec.friendly_name)
-                .emit_event(eventmanager, "spec.friendly_name")
-                .await?;
-        }
-        if group.is_none() {
-            let id = manager
-                .create_group(self.spec.id, &self.spec.friendly_name)
-                .emit_event(eventmanager, "spec")
-                .await?;
-            group = tracker
-                .get_by_id(id)
-                .emit_event(eventmanager, "spec.id")
-                .await?;
-        }
-        let Some(group) = group else {
-            return Err(Error::ActionFailed(
-                "Failed to find or create group.".to_owned(),
-                None,
-            ))
-            .emit_event_nopath(eventmanager)
-            .await;
-        };
-        Ok(group)
     }
 }

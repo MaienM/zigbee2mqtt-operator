@@ -12,9 +12,10 @@ use super::{
     },
 };
 use crate::{
-    error::{EmittableResultFuture, EmittedError, Error},
+    error::{Error, ErrorWithMeta},
     event_manager::EventManager,
     mqtt::exposes::{GroupOptionsSchema, Processor},
+    with_source::ValueWithSource,
 };
 
 //
@@ -66,14 +67,12 @@ pub struct BridgeGroupMember {
 pub struct Creator(BridgeRequest<Creator>);
 add_wrapper_new!(Creator, BridgeRequest);
 impl Creator {
-    pub async fn run(&mut self, id: Option<usize>, friendly_name: &str) -> Result<usize, Error> {
-        let value = self
-            .0
-            .request(CreateRequest {
-                id,
-                friendly_name: friendly_name.to_owned(),
-            })
-            .await?;
+    pub async fn run(
+        &mut self,
+        id: ValueWithSource<Option<usize>>,
+        friendly_name: ValueWithSource<String>,
+    ) -> Result<usize, ErrorWithMeta> {
+        let value = self.0.request(CreateRequest { id, friendly_name }).await?;
         Ok(value.id)
     }
 }
@@ -82,19 +81,41 @@ impl BridgeRequestType for Creator {
     type Request = CreateRequest;
     type Response = CreateResponse;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
         match response {
-            RequestResponse::Ok { data } => data.friendly_name == request.friendly_name,
-            RequestResponse::Error { error } => {
-                error.contains(&format!("'{name}'", name = request.friendly_name))
+            RequestResponse::Ok { ref data } => {
+                if data.friendly_name == *request.friendly_name {
+                    Some(response.into())
+                } else {
+                    None
+                }
+            }
+            RequestResponse::Error { ref error } => {
+                if let Some(id) = *request.id {
+                    if error.contains(&format!("'{id}'")) {
+                        return Some(response.convert().map_err(|err| err.caused_by(&request.id)));
+                    }
+                }
+                if error.contains(&format!("'{}'", request.friendly_name)) {
+                    Some(
+                        response
+                            .convert()
+                            .map_err(|err| err.caused_by(&request.friendly_name)),
+                    )
+                } else {
+                    None
+                }
             }
         }
     }
 }
 #[derive(Serialize, Debug, Clone)]
 pub(crate) struct CreateRequest {
-    id: Option<usize>,
-    friendly_name: String,
+    id: ValueWithSource<Option<usize>>,
+    friendly_name: ValueWithSource<String>,
 }
 #[derive(Deserialize)]
 pub(crate) struct CreateResponse {
@@ -108,27 +129,44 @@ pub(crate) struct CreateResponse {
 pub struct Deletor(BridgeRequest<Deletor>);
 add_wrapper_new!(Deletor, BridgeRequest);
 impl Deletor {
-    pub async fn run(&mut self, id: usize) -> Result<(), Error> {
-        self.0.request(DeleteRequestResponse { id }).await?;
+    pub async fn run(&mut self, id: ValueWithSource<usize>) -> Result<(), ErrorWithMeta> {
+        self.0.request(DeleteRequest { id }).await?;
         Ok(())
     }
 }
 impl BridgeRequestType for Deletor {
     const NAME: &'static str = "group/remove";
-    type Request = DeleteRequestResponse;
-    type Response = DeleteRequestResponse;
+    type Request = DeleteRequest;
+    type Response = DeleteResponse;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
         match response {
-            RequestResponse::Ok { data } => data.id == request.id,
-            RequestResponse::Error { error } => {
-                error.contains(&format!(r#""groupid":{id}"#, id = request.id))
+            RequestResponse::Ok { ref data } => {
+                if data.id == *request.id {
+                    Some(response.into())
+                } else {
+                    None
+                }
+            }
+            RequestResponse::Error { ref error } => {
+                if error.contains(&format!(r#""groupid":{id}"#, id = request.id)) {
+                    Some(response.convert().map_err(|err| err.caused_by(&request.id)))
+                } else {
+                    None
+                }
             }
         }
     }
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct DeleteRequestResponse {
+#[derive(Serialize, Debug, Clone)]
+pub(crate) struct DeleteRequest {
+    id: ValueWithSource<usize>,
+}
+#[derive(Deserialize)]
+pub(crate) struct DeleteResponse {
     id: usize,
 }
 
@@ -138,11 +176,15 @@ pub(crate) struct DeleteRequestResponse {
 pub struct Renamer(BridgeRequest<Renamer>);
 add_wrapper_new!(Renamer, BridgeRequest);
 impl Renamer {
-    pub async fn run(&mut self, id: usize, friendly_name: &str) -> Result<(), Error> {
+    pub async fn run(
+        &mut self,
+        id: ValueWithSource<usize>,
+        friendly_name: ValueWithSource<String>,
+    ) -> Result<(), ErrorWithMeta> {
         self.0
             .request(RenameRequest {
                 from: id,
-                to: friendly_name.to_owned(),
+                to: friendly_name,
                 homeassistant_rename: true,
             })
             .await?;
@@ -154,19 +196,38 @@ impl BridgeRequestType for Renamer {
     type Request = RenameRequest;
     type Response = RenameResponse;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
         match response {
-            RequestResponse::Ok { data } => data.to == request.to,
-            RequestResponse::Error { error } => {
-                error.contains(&format!("'{name}'", name = request.to))
+            RequestResponse::Ok { ref data } => {
+                if data.to == *request.to {
+                    Some(response.into())
+                } else {
+                    None
+                }
+            }
+            RequestResponse::Error { ref error } => {
+                if error.contains(&format!("'{}'", request.from)) {
+                    Some(
+                        response
+                            .convert()
+                            .map_err(|err| err.caused_by(&request.from)),
+                    )
+                } else if error.contains(&format!("'{}'", request.to)) {
+                    Some(response.convert().map_err(|err| err.caused_by(&request.to)))
+                } else {
+                    None
+                }
             }
         }
     }
 }
 #[derive(Serialize, Debug, Clone)]
 pub(crate) struct RenameRequest {
-    from: usize,
-    to: String,
+    from: ValueWithSource<usize>,
+    to: ValueWithSource<String>,
     homeassistant_rename: bool,
 }
 #[derive(Deserialize)]
@@ -180,33 +241,59 @@ pub(crate) struct RenameResponse {
 pub struct MemberAdder(BridgeRequest<MemberAdder>);
 add_wrapper_new!(MemberAdder, BridgeRequest);
 impl MemberAdder {
-    pub async fn run(&mut self, group: usize, device: &str) -> Result<(), Error> {
-        self.0
-            .request(MemberPayload {
-                group,
-                device: device.to_owned(),
-            })
-            .await?;
+    pub async fn run(
+        &mut self,
+        group: ValueWithSource<usize>,
+        device: ValueWithSource<String>,
+    ) -> Result<(), ErrorWithMeta> {
+        self.0.request(MemberRequest { group, device }).await?;
         Ok(())
     }
 }
 impl BridgeRequestType for MemberAdder {
     const NAME: &'static str = "group/members/add";
-    type Request = MemberPayload;
-    type Response = MemberPayload;
+    type Request = MemberRequest;
+    type Response = MemberResponse;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
         match response {
-            RequestResponse::Ok { data } => data == request,
-            RequestResponse::Error { error } => {
-                error.contains(&format!("'{group}'", group = request.group))
-                    || error.contains(&format!("'{device}'", device = request.device))
+            RequestResponse::Ok { ref data } => {
+                if data.group == *request.group && data.device == *request.device {
+                    Some(response.into())
+                } else {
+                    None
+                }
+            }
+            RequestResponse::Error { ref error } => {
+                if error.contains(&format!("'{}'", request.group)) {
+                    Some(
+                        response
+                            .convert()
+                            .map_err(|err| err.caused_by(&request.group)),
+                    )
+                } else if error.contains(&format!("'{}'", request.device)) {
+                    Some(
+                        response
+                            .convert()
+                            .map_err(|err| err.caused_by(&request.device)),
+                    )
+                } else {
+                    None
+                }
             }
         }
     }
 }
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub(crate) struct MemberPayload {
+#[derive(Serialize, Debug, Clone)]
+pub(crate) struct MemberRequest {
+    group: ValueWithSource<usize>,
+    device: ValueWithSource<String>,
+}
+#[derive(Deserialize)]
+pub(crate) struct MemberResponse {
     group: usize,
     device: String,
 }
@@ -217,13 +304,12 @@ pub(crate) struct MemberPayload {
 pub struct MemberRemover(BridgeRequest<MemberRemover>);
 add_wrapper_new!(MemberRemover, BridgeRequest);
 impl MemberRemover {
-    pub async fn run(&mut self, group: usize, device: &str) -> Result<(), Error> {
-        self.0
-            .request(MemberPayload {
-                group,
-                device: device.to_owned(),
-            })
-            .await?;
+    pub async fn run(
+        &mut self,
+        group: ValueWithSource<usize>,
+        device: ValueWithSource<String>,
+    ) -> Result<(), ErrorWithMeta> {
+        self.0.request(MemberRequest { group, device }).await?;
         Ok(())
     }
 }
@@ -232,8 +318,11 @@ impl BridgeRequestType for MemberRemover {
     type Request = <MemberAdder as BridgeRequestType>::Request;
     type Response = <MemberAdder as BridgeRequestType>::Response;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
-        <MemberAdder as BridgeRequestType>::matches(request, response)
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
+        <MemberAdder as BridgeRequestType>::process_response(request, response)
     }
 }
 
@@ -243,10 +332,13 @@ impl BridgeRequestType for MemberRemover {
 pub struct OptionsManager {
     manager: Arc<Manager>,
     request_manager: BridgeRequest<OptionsManager>,
-    id: usize,
+    id: ValueWithSource<usize>,
 }
 impl OptionsManager {
-    pub async fn new(manager: Arc<Manager>, id: usize) -> Result<Self, Error> {
+    pub async fn new(
+        manager: Arc<Manager>,
+        id: ValueWithSource<usize>,
+    ) -> Result<Self, ErrorWithMeta> {
         Ok(Self {
             manager: manager.clone(),
             request_manager: BridgeRequest::new(manager).await?,
@@ -258,23 +350,17 @@ setup_configuration_manager!(OptionsManager);
 #[async_trait]
 impl ConfigurationManagerInner for OptionsManager {
     const NAME: &'static str = "option";
-    const PATH: &'static str = "spec.options";
 
-    async fn schema(
-        &mut self,
-        _eventmanager: &EventManager,
-    ) -> Result<Box<dyn Processor + Send + Sync>, EmittedError> {
+    async fn schema(&mut self) -> Result<Box<dyn Processor + Send + Sync>, ErrorWithMeta> {
         Ok(Box::<GroupOptionsSchema>::default())
     }
 
-    async fn get(&mut self, eventmanager: &EventManager) -> Result<Configuration, EmittedError> {
+    async fn get(&mut self) -> Result<Configuration, ErrorWithMeta> {
         Ok(self
             .manager
             .get_bridge_info_tracker()
-            .emit_event_nopath(eventmanager)
             .await?
             .get()
-            .emit_event_nopath(eventmanager)
             .await?
             .config
             .groups
@@ -283,11 +369,14 @@ impl ConfigurationManagerInner for OptionsManager {
             .unwrap_or_default())
     }
 
-    async fn set(&mut self, configuration: &Configuration) -> Result<Configuration, Error> {
+    async fn set(
+        &mut self,
+        configuration: &ValueWithSource<Configuration>,
+    ) -> Result<Configuration, ErrorWithMeta> {
         let value = self
             .request_manager
             .request(OptionsRequest {
-                id: self.id,
+                id: self.id.clone(),
                 options: configuration.clone(),
             })
             .await?;
@@ -303,19 +392,32 @@ impl BridgeRequestType for OptionsManager {
     type Request = OptionsRequest;
     type Response = OptionsResponse;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool {
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
         match response {
-            RequestResponse::Ok { data } => data.id == request.id,
-            RequestResponse::Error { error } => {
-                error.contains(&format!("'{ieee_address}'", ieee_address = request.id))
+            RequestResponse::Ok { ref data } => {
+                if data.id == *request.id {
+                    Some(response.into())
+                } else {
+                    None
+                }
+            }
+            RequestResponse::Error { ref error } => {
+                if error.contains(&format!("'{}'", request.id)) {
+                    Some(response.convert().map_err(|err| err.caused_by(&request.id)))
+                } else {
+                    None
+                }
             }
         }
     }
 }
 #[derive(Serialize, Debug, Clone)]
 pub(crate) struct OptionsRequest {
-    id: usize,
-    options: Configuration,
+    id: ValueWithSource<usize>,
+    options: ValueWithSource<Configuration>,
 }
 #[derive(Deserialize)]
 pub(crate) struct OptionsResponse {

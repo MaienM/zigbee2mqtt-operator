@@ -1,19 +1,23 @@
 //! Errors & utilities to manage them.
 
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 
 use async_trait::async_trait;
-use futures::Future;
+use k8s_openapi::api::core::v1::ObjectReference;
 use kube::runtime::finalizer::Error as FinalizerError;
 use thiserror::Error;
 
-use crate::event_manager::{EventCore, EventManager, EventType};
+use crate::{
+    event_manager::{EventManager, EventType},
+    with_source::ValueWithSource,
+    Context, EventCore,
+};
 
 macro_rules! maybe {
     ($value:expr) => {
         $value
             .clone()
-            .map_or("".to_string(), |value| format!(": {:?}", value))
+            .map_or("".to_string(), |value| format!(": {value:?}"))
     };
 }
 
@@ -27,15 +31,8 @@ pub enum Error {
     FinalizerError(#[source] Arc<Box<FinalizerError<Error>>>),
 
     /// A misconfiguration of a Kubernetes resource. This is only for problems that require a change to a resource to resolve, not for temporary failures that might resolve by themselves.
-    #[error("Invalid resource at {field_path}: {message}")]
-    InvalidResource {
-        /// The path of the portion of the resource that is problematic, like [`EventCore::field_path`].
-        ///
-        /// This should be a partial JSON path that can be appended directly to another path (e.g. `.foo` or `[12]`) so that the full path can be emitted easily with [`EmittableResult::emit_event_with_path`].
-        field_path: String,
-        /// A human-readable message describing the problem with the value.
-        message: String,
-    },
+    #[error("Invalid resource: {0}")]
+    InvalidResource(String),
 
     /// The MQTT broker responded in an unexpected manner.
     #[error("MQTT error: {0}{err}", err = maybe!(.1))]
@@ -76,113 +73,106 @@ pub enum Error {
     ),
 }
 
-/// An [`enum@Error`] for which an [`k8s_openapi::api::events::v1::Event`] has already been published.
-///
-/// Created with [`EmittableResult`].
+/// An [`enum@Error`] with some additional metadata needed to publish a corresponding [`k8s_openapi::api::events::v1::Event`].
 #[allow(clippy::module_name_repetitions)]
-pub struct EmittedError(pub Error);
+#[derive(Debug)]
+pub struct ErrorWithMeta {
+    error: Error,
+    source: Option<String>,
+    published: bool,
+}
+impl Error {
+    /// Add source information to the error.
+    #[must_use]
+    pub fn caused_by<T>(self, value: &ValueWithSource<T>) -> ErrorWithMeta {
+        ErrorWithMeta {
+            error: self,
+            source: value.source().cloned(),
+            published: false,
+        }
+    }
 
-/// Helper to emit an [`enum@Error`] contained inside a [`Result`], converting it to an [`EmittedError`] in the process.
+    /// Convert without source information.
+    #[must_use]
+    pub fn unknown_cause(self) -> ErrorWithMeta {
+        ErrorWithMeta {
+            error: self,
+            source: None,
+            published: false,
+        }
+    }
+}
+impl ErrorWithMeta {
+    /// Get error.
+    #[must_use]
+    pub fn error(&self) -> &Error {
+        &self.error
+    }
+
+    /// Get source.
+    #[must_use]
+    pub fn source(&self) -> &Option<String> {
+        &self.source
+    }
+
+    /// Mark as already published, which will prevent it from being published again when [`ErrorWithMeta::publish`] is called..
+    #[must_use]
+    pub fn mark_published(mut self) -> ErrorWithMeta {
+        self.published = true;
+        self
+    }
+}
+impl From<Error> for ErrorWithMeta {
+    fn from(value: Error) -> Self {
+        value.unknown_cause()
+    }
+}
+impl Display for ErrorWithMeta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+/// Trait to finalize the contained error in a [`Result<_, ErrorWithMeta>`] by publishing it if needed and then unwrapping it.
+#[allow(clippy::module_name_repetitions)]
 #[async_trait]
-pub trait EmittableResult<V> {
-    /// Emit the event, using the given path as context for the source of the error (see [`EventCore::field_path`]).
-    ///
-    /// For [`Error::InvalidResource`] the paths will be combined as `{field_path}{error.field_path}`.
-    async fn emit_event(self, manager: &EventManager, field_path: &str) -> Result<V, EmittedError>;
-
-    /// Emit the event.
-    async fn emit_event_nopath(self, manager: &EventManager) -> Result<V, EmittedError>;
-
-    /// Mark error as published without actually publishing anything. This should only be used in cases where one or more events have already been published for the error manually.
-    fn fake_emit_event(self) -> Result<V, EmittedError>;
+pub trait ErrorWithMetaFinalizer<V> {
+    /// Unwrap the underlying error (if any), publishing it as an event if needed.
+    #[must_use]
+    async fn publish_unwrap_error(
+        self,
+        ctx: &Arc<Context>,
+        regarding: ObjectReference,
+    ) -> Result<V, Error>;
 }
 #[async_trait]
-impl<V> EmittableResult<V> for Result<V, Error>
+impl<V> ErrorWithMetaFinalizer<V> for Result<V, ErrorWithMeta>
 where
     V: Send,
 {
-    async fn emit_event(
-        mut self,
-        manager: &EventManager,
-        field_path: &str,
-    ) -> Result<V, EmittedError> {
-        // Special case for Error::InvalidResource where we combine the two paths and use the result for both the InvalidResource path and the EventCore path.
-        let field_path = match self {
-            Err(Error::InvalidResource {
-                field_path: ref mut error_field_path,
-                ..
-            }) => {
-                *error_field_path = format!("{field_path}{error_field_path}");
-                error_field_path.clone()
+    async fn publish_unwrap_error(
+        self,
+        ctx: &Arc<Context>,
+        regarding: ObjectReference,
+    ) -> Result<V, Error> {
+        match self {
+            Ok(value) => Ok(value),
+            Err(withmeta) => {
+                if !withmeta.published {
+                    let eventmanager = EventManager::new(ctx.client.clone(), regarding);
+                    eventmanager
+                        .publish_nolog(EventCore {
+                            action: "Reconciling".to_string(),
+                            note: Some(withmeta.error.to_string()),
+                            reason: "Created".to_string(),
+                            type_: EventType::Warning,
+                            field_path: withmeta.source,
+                        })
+                        .await;
+                }
+
+                Err(withmeta.error)
             }
-            _ => field_path.to_owned(),
-        };
-
-        if let Err(ref error) = self {
-            manager
-                .publish_nolog(EventCore {
-                    action: "Reconciling".to_string(),
-                    note: Some(error.to_string()),
-                    reason: "Created".to_string(),
-                    type_: EventType::Warning,
-                    field_path: Some(field_path),
-                })
-                .await;
         }
-        self.map_err(EmittedError)
-    }
-
-    async fn emit_event_nopath(mut self, manager: &EventManager) -> Result<V, EmittedError> {
-        if let Err(ref error) = self {
-            manager
-                .publish_nolog(EventCore {
-                    action: "Reconciling".to_string(),
-                    note: Some(error.to_string()),
-                    reason: "Created".to_string(),
-                    type_: EventType::Warning,
-                    field_path: None,
-                })
-                .await;
-        }
-        self.map_err(EmittedError)
-    }
-
-    fn fake_emit_event(self) -> Result<V, EmittedError> {
-        self.map_err(EmittedError)
-    }
-}
-
-/// Helper to use [`EmittableResult`] methods directly on a [`Future`], saving a layer of `.await` calls.
-#[async_trait]
-pub trait EmittableResultFuture<V> {
-    /// See [`EmittableResult::emit_event`].
-    async fn emit_event(self, manager: &EventManager, field_path: &str) -> Result<V, EmittedError>;
-
-    /// See [`EmittableResult::emit_event_nopath`].
-    async fn emit_event_nopath(self, manager: &EventManager) -> Result<V, EmittedError>;
-
-    /// See [`EmittableResult::fake_emit_event`].
-    async fn fake_emit_event(self) -> Result<V, EmittedError>;
-}
-#[async_trait]
-impl<F, V> EmittableResultFuture<V> for F
-where
-    F: Future<Output = Result<V, Error>> + Send,
-    V: Send,
-{
-    async fn emit_event(
-        mut self,
-        manager: &EventManager,
-        field_path: &str,
-    ) -> Result<V, EmittedError> {
-        self.await.emit_event(manager, field_path).await
-    }
-
-    async fn emit_event_nopath(mut self, manager: &EventManager) -> Result<V, EmittedError> {
-        self.await.emit_event_nopath(manager).await
-    }
-
-    async fn fake_emit_event(self) -> Result<V, EmittedError> {
-        self.await.fake_emit_event()
     }
 }

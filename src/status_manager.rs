@@ -14,7 +14,7 @@ use serde_json::json;
 use tokio::spawn;
 use tracing::error_span;
 
-use crate::{ResourceLocalExt, NAME};
+use crate::{ObjectReferenceLocalExt, ResourceLocalExt, NAME};
 
 #[derive(Clone)]
 pub struct StatusManager<T>
@@ -42,7 +42,7 @@ where
     pub fn new(client: Client, resource: &T) -> Self {
         return Self {
             api: Arc::new(Api::namespaced(client, &resource.namespace().unwrap())),
-            id: resource.id(),
+            id: resource.get_ref().id(),
             name: resource.name_any(),
             old: resource.status().cloned(),
             current: resource

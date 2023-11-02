@@ -10,7 +10,7 @@ use tokio_stream::{
     StreamExt,
 };
 
-use crate::error::Error;
+use crate::error::{Error, ErrorWithMeta};
 
 /// A subscription to an MQTT topic.
 #[derive(Deref, DerefMut)]
@@ -122,12 +122,13 @@ where
         })
     }
 }
-impl<V, St> TopicStream<St>
+impl<V, E, St> TopicStream<St>
 where
-    St: Stream<Item = Result<V, Error>> + StreamExt,
+    E: Into<ErrorWithMeta>,
+    St: Stream<Item = Result<V, E>> + StreamExt,
 {
     /// Filter non-errors.
-    pub fn filter_ok<F>(self, mut f: F) -> TopicStream<impl Stream<Item = Result<V, Error>>>
+    pub fn filter_ok<F>(self, mut f: F) -> TopicStream<impl Stream<Item = Result<V, E>>>
     where
         F: FnMut(&V) -> bool,
     {
@@ -141,38 +142,40 @@ where
     }
 
     /// Map non-errors.
-    pub fn map_ok<NV, F>(self, mut f: F) -> TopicStream<impl Stream<Item = Result<NV, Error>>>
+    pub fn map_ok<NV, NE, F>(self, mut f: F) -> TopicStream<impl Stream<Item = Result<NV, NE>>>
     where
-        F: FnMut(V) -> Result<NV, Error>,
+        NE: From<E> + Into<ErrorWithMeta>,
+        F: FnMut(V) -> Result<NV, NE>,
     {
         TopicStream {
             stream: self.stream.map(move |value| match value {
                 Ok(value) => f(value),
-                Err(err) => Err(err),
+                Err(err) => Err(NE::from(err)),
             }),
             topic: self.topic,
         }
     }
 
     /// Filter & map non-errors.
-    pub fn filter_map_ok<NV, F>(
+    pub fn filter_map_ok<NV, NE, F>(
         self,
         mut f: F,
-    ) -> TopicStream<impl Stream<Item = Result<NV, Error>>>
+    ) -> TopicStream<impl Stream<Item = Result<NV, NE>>>
     where
-        F: FnMut(V) -> Option<Result<NV, Error>>,
+        NE: From<E> + Into<ErrorWithMeta>,
+        F: FnMut(V) -> Option<Result<NV, NE>>,
     {
         TopicStream {
             stream: self.stream.filter_map(move |value| match value {
                 Ok(value) => f(value),
-                Err(err) => Some(Err(err)),
+                Err(err) => Some(Err(NE::from(err))),
             }),
             topic: self.topic,
         }
     }
 
     /// Wrap the stream in a Box.
-    pub fn boxed(self) -> TopicStream<Box<dyn Stream<Item = Result<V, Error>> + Unpin + Send>>
+    pub fn boxed(self) -> TopicStream<Box<dyn Stream<Item = Result<V, E>> + Unpin + Send>>
     where
         St: Unpin + Send + 'static,
     {
@@ -182,9 +185,10 @@ where
         }
     }
 }
-impl<V, St> TopicStream<St>
+impl<V, E, St> TopicStream<St>
 where
-    St: Stream<Item = Result<V, Error>> + StreamExt + Unpin + Send,
+    E: From<Error> + Into<ErrorWithMeta>,
+    St: Stream<Item = Result<V, E>> + StreamExt + Unpin + Send,
 {
     /// Get the next value, or None if the stream has closed.
     pub async fn next(&mut self) -> Option<St::Item> {
@@ -199,7 +203,8 @@ where
                 topic: self.topic.clone(),
                 message: "subscription closed".to_string(),
                 source: None,
-            }),
+            }
+            .into()),
         }
     }
 
@@ -211,7 +216,8 @@ where
                 topic: self.topic.clone(),
                 message: "timeout while waiting for message".to_string(),
                 source: None,
-            }),
+            }
+            .into()),
         }
     }
 

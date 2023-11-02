@@ -12,7 +12,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use structout::generate;
 
-use crate::error::Error;
+use crate::{
+    error::{Error, ErrorWithMeta},
+    with_source::ValueWithSource,
+};
 
 // Generate structs to hold the data for each type.
 //
@@ -215,37 +218,6 @@ impl Default for ListItem {
     }
 }
 
-/// Struct to build a [`Error::InvalidResource`].
-#[derive(Debug, Eq, PartialEq)]
-pub struct InvalidValue {
-    /// The path of the value relative to the start.
-    ///
-    /// This is a partial JSON path that is intended to be appended directly to the key of the start value (e.g. `.foo` or `[12]`).
-    path: String,
-    /// A human-readable message describing the problem with the value.
-    message: String,
-}
-impl InvalidValue {
-    fn new(message: &str) -> Self {
-        Self {
-            path: String::new(),
-            message: message.to_owned(),
-        }
-    }
-    fn prefix_path(mut self, prefix: String) -> Self {
-        self.path = prefix + &self.path;
-        self
-    }
-}
-impl From<InvalidValue> for Error {
-    fn from(value: InvalidValue) -> Self {
-        Error::InvalidResource {
-            field_path: value.path,
-            message: value.message,
-        }
-    }
-}
-
 /// Convert a [`Value`] to string.
 macro_rules! to_json {
     ($val:expr) => {
@@ -284,29 +256,31 @@ pub trait Processor {
     /// Process the value, validating it matches the schema, and transforming it as needed.
     ///
     /// The caller _must_ use the returned value (which may be different from the input).
-    fn process(&self, value: Value) -> Result<Value, InvalidValue>;
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta>;
 }
 impl Processor for Binary {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
-        if value == self.value_on || value == self.value_off {
-            Ok(value)
-        } else if Some(value) == self.value_toggle {
-            Err(InvalidValue::new(&format!(
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
+        if *value == self.value_on || *value == self.value_off {
+            Ok(value.take())
+        } else if Some(&*value) == self.value_toggle.as_ref() {
+            Err(Error::InvalidResource(format!(
                 "This will toggle the state on every reconcile. Use {value_on} or {value_off} instead.",
                 value_on = to_json!(self.value_on),
                 value_off = to_json!(self.value_off),
-            )))
+            )).caused_by(&value)
+            )
         } else {
-            Err(InvalidValue::new(&format!(
+            Err(Error::InvalidResource(format!(
                 "Must be either {value_on} or {value_off}.",
                 value_on = to_json!(self.value_on),
                 value_off = to_json!(self.value_off),
-            )))
+            ))
+            .caused_by(&value))
         }
     }
 }
 impl Processor for Numeric {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         // Instead of a numeric value the name of a preset can be used. Check this first so we can treat it as a number after thsi point.
         if let Some(preset_name) = value.as_str() {
             for preset in &self.presets {
@@ -319,31 +293,36 @@ impl Processor for Numeric {
         let Some(num) = value.as_f64() else {
             let preset_names = self.presets.iter().map(|p| &p.name).collect::<Vec<_>>();
             return if preset_names.is_empty() {
-                Err(InvalidValue::new("Must be a number."))
+                Err(Error::InvalidResource("Must be a number.".to_owned()).caused_by(&value))
             } else {
-                Err(InvalidValue::new(&format!(
+                Err(Error::InvalidResource(format!(
                     "Must be a number or one of the presets: {preset_names}.",
                     preset_names = to_json!(preset_names)
-                )))
+                ))
+                .caused_by(&value))
             };
         };
 
         match (self.value_min, self.value_max) {
             (Some(min), Some(max)) => {
                 if num < min || num > max {
-                    return Err(InvalidValue::new(&format!(
+                    return Err(Error::InvalidResource(format!(
                         "Must be between {min} and {max} (inclusive)."
-                    )));
+                    ))
+                    .caused_by(&value));
                 }
             }
             (Some(min), None) => {
                 if num < min {
-                    return Err(InvalidValue::new(&format!("Must be at least {min}.")));
+                    return Err(Error::InvalidResource(format!("Must be at least {min}."))
+                        .caused_by(&value));
                 }
             }
             (None, Some(max)) => {
                 if num > max {
-                    return Err(InvalidValue::new(&format!("Must be at most {max}.")));
+                    return Err(
+                        Error::InvalidResource(format!("Must be at most {max}.")).caused_by(&value)
+                    );
                 }
             }
             (None, None) => {}
@@ -352,92 +331,94 @@ impl Processor for Numeric {
             // This is assuming that steps should be taken from the min value, so a range of 11-31 with steps of 2 would accept 11, 13, 15, etc.
             let start = self.value_min.unwrap_or(0.0);
             if (num - start) % step != 0.0 {
-                return Err(InvalidValue::new(&format!(
+                return Err(Error::InvalidResource(format!(
                     "Must be {start} plus any number of steps of {step} (e.g. {example_valid_1}, {example_valid_2}, but not {example_invalid}).",
                     example_valid_1 = start + step,
                     example_valid_2 = start + step * 2.0,
                     example_invalid = start + step * 1.5,
-                )));
+                )).caused_by(&value));
             }
         }
-        Ok(value.clone())
+        Ok(value.take())
     }
 }
 impl Processor for Enum {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         if self.values.contains(&value) {
-            Ok(value.clone())
+            Ok(value.take())
         } else {
-            Err(InvalidValue::new(&format!(
+            Err(Error::InvalidResource(format!(
                 "Must be one of {values}.",
                 values = to_json!(self.values),
-            )))
+            ))
+            .caused_by(&value))
         }
     }
 }
 impl Processor for Text {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         if value.is_string() {
-            Ok(value.clone())
+            Ok(value.take())
         } else {
-            Err(InvalidValue::new("Must be a string."))
+            Err(Error::InvalidResource("Must be a string.".to_owned()).caused_by(&value))
         }
     }
 }
 impl Processor for List {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         let Some(items) = value.as_array() else {
-            return Err(InvalidValue::new("Must be an array."));
+            return Err(Error::InvalidResource("Must be an array.".to_owned()).caused_by(&value));
         };
+        let items = value.with_value(items);
 
         let len = items.len();
         match (self.length_min, self.length_max) {
             (Some(min), Some(max)) => {
                 if len < min || len > max {
-                    return Err(InvalidValue::new(&format!(
+                    return Err(Error::InvalidResource(format!(
                         "Must have between {min} and {max} items (inclusive)."
-                    )));
+                    ))
+                    .caused_by(&value));
                 }
             }
             (Some(min), None) => {
                 if len < min {
-                    return Err(InvalidValue::new(&format!(
+                    return Err(Error::InvalidResource(format!(
                         "Must have at least {min} item(s)."
-                    )));
+                    ))
+                    .caused_by(&value));
                 }
             }
             (None, Some(max)) => {
                 if len > max {
-                    return Err(InvalidValue::new(&format!(
+                    return Err(Error::InvalidResource(format!(
                         "Must have at most {max} item(s)."
-                    )));
+                    ))
+                    .caused_by(&value));
                 }
             }
             (None, None) => {}
         };
 
         let mut new_items = Vec::new();
-        for (idx, item) in items.iter().cloned().enumerate() {
-            new_items.push(
-                self.item_type
-                    .process(item)
-                    .map_err(|err| err.prefix_path(format!("[{idx}]")))?,
-            );
+        for item in items {
+            new_items.push(self.item_type.process(item.cloned())?);
         }
         Ok(Value::Array(new_items))
     }
 }
 impl Processor for Composite {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         let Some(object) = value.as_object() else {
-            return Err(InvalidValue::new("Must be an object."));
+            return Err(Error::InvalidResource("Must be an object.".to_owned()).caused_by(&value));
         };
+        let object = value.with_value(object);
+
         for (name, value) in object {
-            if !self.features.knows_property(name) && value != &Value::Null {
-                return Err(InvalidValue {
-                    path: format!(".{name}"),
-                    message: "Unknown property.".to_owned(),
-                });
+            if !self.features.knows_property(name) && *value != &Value::Null {
+                return Err(
+                    Error::InvalidResource("Unknown property.".to_owned()).caused_by(&value)
+                );
             }
         }
 
@@ -445,53 +426,50 @@ impl Processor for Composite {
     }
 }
 impl Processor for Specific {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         self.features.process(value)
     }
 }
 impl Processor for Bag {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         if !value.is_object() {
-            return Err(InvalidValue::new("Must be an object."));
+            return Err(Error::InvalidResource("Must be an object.".to_owned()).caused_by(&value));
         };
-        Ok(value)
+        Ok(value.take())
     }
 }
 impl<T> Processor for WithProperty<T>
 where
     T: Clone + Processor,
 {
-    fn process(&self, mut value: Value) -> Result<Value, InvalidValue> {
+    fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
+        let (mut value, source) = value.split();
         let Some(object) = value.as_object_mut() else {
-            return Err(InvalidValue::new("Must be an object."));
+            return Err(Error::InvalidResource("Must be an object.".to_owned()).caused_by(&source));
         };
+        let mut object = source.with_value(object);
 
         let Some(item) = object.remove(&self.property) else {
-            return Ok(value);
+            return Ok(value.take());
         };
+        let item = object.sub(item, &format!(".{}", self.property));
 
-        let result = match item {
-            Value::Null => {
-                // Null value indicates unset/reset, so this is always valid.
-                Value::Null
-            }
-            item => self
-                .type_
-                .process(item)
-                .map_err(|err| err.prefix_path(format!(".{property}", property = self.property)))?,
+        let result = match *item {
+            // Null value indicates unset/reset, so this is always valid.
+            Value::Null => Value::Null,
+            _ => self.type_.process(item)?,
         };
         object.insert(self.property.clone(), result);
 
-        Ok(value)
+        Ok(value.take())
     }
 }
 impl Processor for Vec<Schema> {
-    fn process(&self, value: Value) -> Result<Value, InvalidValue> {
-        let mut value = value.clone();
+    fn process(&self, mut value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         for feature in self {
-            value = feature.process(value)?;
+            value = value.transform(|v| feature.process(v)).transpose()?;
         }
-        Ok(value)
+        Ok(value.take())
     }
 }
 
@@ -628,7 +606,7 @@ macro_rules! create_toplevel {
             }
         }
         impl Processor for $name {
-            fn process(&self, value: Value) -> Result<Value, InvalidValue> {
+            fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
                 self.0.process(value)
             }
         }
@@ -652,7 +630,6 @@ create_toplevel!(
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     use super::*;
@@ -674,16 +651,77 @@ mod tests {
         serde_yaml::from_str::<Vec<Device>>(include_str!("./exposes-examples.yaml")).unwrap();
     }
 
+    macro_rules! process {
+        ($expose:ident, $value:expr $(,)?) => {{
+            let value: ValueWithSource<Value> =
+                ValueWithSource::new($value.into(), Some("root".to_owned()));
+            let result = $expose.process(value.clone());
+            result.map_err(|err| match err.error() {
+                Error::InvalidResource(msg) => (msg.clone(), err.source().clone()),
+                err => panic!("unexpected error: {err:?}"),
+            })
+        }};
+    }
+
+    macro_rules! assert_ok {
+        ($expose:ident, [ $value:expr => $result:expr, $($morevalue:expr => $moreresult:expr),* $(,)? ] $(,)?) => {
+            assert_ok!($expose, $value, $result);
+            assert_ok!($expose, [ $($morevalue => $moreresult),* ]);
+        };
+        ($expose:ident, [ $value:expr => $result:expr $(,)? ] $(,)?) => {
+            assert_ok!($expose, $value, $result);
+        };
+        ($expose:ident, $value:expr, $expected:expr $(,)?) => {
+            pretty_assertions::assert_eq!(process!($expose, $value), Ok($expected.into()));
+        };
+    }
+
+    macro_rules! assert_err {
+        ($expose:ident, [ $value:expr, $($more:expr),* $(,)? ], $message:expr $(, path = $path:literal)? $(,)?) => {
+            assert_err!($expose, $value, $message $(, path = $path)?);
+            assert_err!($expose, [ $($more),* ], $message $(, path = $path)?);
+        };
+        ($expose:ident, [ $value:expr $(,)? ], $message:expr $(, path = $path:literal)? $(,)?) => {
+            assert_err!($expose, $value, $message $(, path = $path)?);
+        };
+        ($expose:ident, $value:expr, $message:expr $(,)?) => {
+            assert_err!($expose, $value, $message, path = "");
+        };
+        ($expose:ident, $value:expr, $message:expr, path = $path:literal $(,)?) => {
+            pretty_assertions::assert_eq!(
+                process!($expose, $value),
+                Err(($message.to_owned(), Some(format!("root{}", $path)))),
+            );
+        };
+    }
+
     macro_rules! assert_roundtrip {
+        ($expose:ident, [ $value:expr, $($more:expr),* $(,)? ] $(,)?) => {
+            assert_roundtrip!($expose, $value);
+            assert_roundtrip!($expose, [ $($more),* ]);
+        };
+        ($expose:ident, [ $value:expr $(,)? ] $(,)?) => {
+            assert_roundtrip!($expose, $value);
+        };
         ($expose:ident, $value:expr $(,)?) => {
-            let value: Value = $value;
-            assert_eq!($expose.process(value.clone()), Ok(value));
+            let value: Value = $value.into();
+            assert_ok!($expose, value.clone(), value);
+        };
+    }
+
+    macro_rules! vvec {
+        [$($values:expr),+] => {
+            {
+                vec![
+                    $(
+                        Value::from($values)
+                    ),+
+                ]
+            }
         };
     }
 
     mod process_binary {
-        use pretty_assertions::assert_eq;
-
         use super::*;
 
         static EXPOSE: Lazy<Binary> = Lazy::new(|| {
@@ -697,45 +735,36 @@ mod tests {
 
         #[test]
         fn accept_on_off() {
-            assert_roundtrip!(EXPOSE, "ON".into());
-            assert_roundtrip!(EXPOSE, "OFF".into());
+            assert_roundtrip!(EXPOSE, ["ON", "OFF"]);
         }
 
         #[test]
         fn reject_toggle() {
-            assert_eq!(
-                EXPOSE.process("TOGGLE".into()),
-                Err(InvalidValue::new(
-                    r#"This will toggle the state on every reconcile. Use "ON" or "OFF" instead."#
-                ))
+            assert_err!(
+                EXPOSE,
+                "TOGGLE",
+                r#"This will toggle the state on every reconcile. Use "ON" or "OFF" instead."#,
             );
         }
 
         #[test]
         fn reject_other() {
-            let err = Err(InvalidValue::new(r#"Must be either "ON" or "OFF"."#));
-            assert_eq!(EXPOSE.process("INVALID".into()), err);
-            assert_eq!(EXPOSE.process(10.into()), err);
-            assert_eq!(EXPOSE.process(true.into()), err);
-            assert_eq!(EXPOSE.process(vec!["ON"].into()), err);
+            assert_err!(
+                EXPOSE,
+                ["INVALID", 10, true, vvec!["ON"]],
+                r#"Must be either "ON" or "OFF"."#,
+            );
         }
     }
 
     mod process_numeric {
-        use pretty_assertions::assert_eq;
-
         use super::*;
 
         #[test]
         fn unrestricted() {
             let expose = Numeric::default();
-            assert_roundtrip!(expose, 0.into());
-            assert_roundtrip!(expose, 50.into());
-
-            let type_err = Err(InvalidValue::new("Must be a number."));
-            assert_eq!(expose.process("50".into()), type_err);
-            assert_eq!(expose.process(true.into()), type_err);
-            assert_eq!(expose.process(vec![10].into()), type_err);
+            assert_roundtrip!(expose, [-50, 0, 50]);
+            assert_err!(expose, ["50", true, vvec![10]], "Must be a number.");
         }
 
         #[test]
@@ -744,11 +773,8 @@ mod tests {
                 .value_min(Some(10.0))
                 .build()
                 .unwrap();
-            assert_eq!(
-                expose.process(0.into()),
-                Err(InvalidValue::new("Must be at least 10."))
-            );
-            assert_roundtrip!(expose, 50.into());
+            assert_roundtrip!(expose, [10, 50]);
+            assert_err!(expose, [-50, 0, 9.9], "Must be at least 10.");
         }
 
         #[test]
@@ -757,11 +783,8 @@ mod tests {
                 .value_max(Some(10.0))
                 .build()
                 .unwrap();
-            assert_roundtrip!(expose, 0.into());
-            assert_eq!(
-                expose.process(50.into()),
-                Err(InvalidValue::new("Must be at most 10."))
-            );
+            assert_roundtrip!(expose, [-50, 0, 9.9, 10]);
+            assert_err!(expose, [10.1, 50], "Must be at most 10.");
         }
 
         #[test]
@@ -771,11 +794,8 @@ mod tests {
                 .value_max(Some(100.0))
                 .build()
                 .unwrap();
-            assert_eq!(
-                expose.process(0.into()),
-                Err(InvalidValue::new("Must be between 10 and 100 (inclusive)."))
-            );
-            assert_roundtrip!(expose, 50.into());
+            assert_roundtrip!(expose, [10, 50, 100]);
+            assert_err!(expose, [0, 110], "Must be between 10 and 100 (inclusive).");
         }
 
         #[test]
@@ -785,17 +805,13 @@ mod tests {
                 .value_step(Some(2.0))
                 .build()
                 .unwrap();
-            assert_eq!(
-                expose.process(0.into()),
-                Err(InvalidValue::new("Must be at least 1."))
+            assert_roundtrip!(expose, 13);
+            assert_err!(expose, 0, "Must be at least 1.");
+            assert_err!(
+                expose,
+                [2, 4],
+                "Must be 1 plus any number of steps of 2 (e.g. 3, 5, but not 4)."
             );
-            assert_eq!(
-                expose.process(2.into()),
-                Err(InvalidValue::new(
-                    "Must be 1 plus any number of steps of 2 (e.g. 3, 5, but not 4)."
-                ))
-            );
-            assert_roundtrip!(expose, 13.into());
         }
 
         #[test]
@@ -815,21 +831,15 @@ mod tests {
                 ])
                 .build()
                 .unwrap();
-            assert_roundtrip!(expose, 0.into());
-            assert_roundtrip!(expose, 25.into());
-            assert_eq!(expose.process("default".into()), Ok((25.0).into()));
-            assert_eq!(expose.process("previous".into()), Ok((-1.0).into()));
-            assert_eq!(
-                expose.process("invalid".into()),
-                Err(InvalidValue::new(
-                    r#"Must be a number or one of the presets: ["default","previous"]."#
-                ))
-            );
-            assert_eq!(
-                expose.process(true.into()),
-                Err(InvalidValue::new(
-                    r#"Must be a number or one of the presets: ["default","previous"]."#
-                ))
+            assert_roundtrip!(expose, [0, 25]);
+            assert_ok!(expose, [
+                "default" => 25.0,
+                "previous" => -1.0,
+            ]);
+            assert_err!(
+                expose,
+                ["invalid", true, vvec!["default"]],
+                r#"Must be a number or one of the presets: ["default","previous"]."#
             );
         }
     }
@@ -837,51 +847,49 @@ mod tests {
     #[test]
     fn process_enum() {
         let expose = EnumBuilder::default()
-            .values(vec!["RED".into(), "GREEN".into(), "BLUE".into()])
+            .values(vvec!["RED", "GREEN", "BLUE"])
             .build()
             .unwrap();
-        assert_roundtrip!(expose, "RED".into());
-
-        let err = Err(InvalidValue::new(
-            r#"Must be one of ["RED","GREEN","BLUE"]."#,
-        ));
-        assert_eq!(expose.process("CYAN".into()), err);
-        assert_eq!(expose.process(10.into()), err);
-        assert_eq!(expose.process(true.into()), err);
+        assert_roundtrip!(expose, ["RED", "BLUE"]);
+        assert_err!(
+            expose,
+            ["CYAN", 10, true, vvec!["GREEN"]],
+            r#"Must be one of ["RED","GREEN","BLUE"]."#
+        );
     }
 
     #[test]
     fn process_text() {
         let expose = Text::default();
-
-        assert_roundtrip!(expose, "HELLO".into());
-
-        let type_err = Err(InvalidValue::new("Must be a string."));
-        assert_eq!(expose.process(10.into()), type_err);
-        assert_eq!(expose.process(true.into()), type_err);
+        assert_roundtrip!(expose, "HELLO");
+        assert_err!(expose, [10, true, vvec!["WORLD"]], "Must be a string.");
     }
 
     mod process_list {
-        use pretty_assertions::assert_eq;
-
         use super::*;
 
         #[test]
         fn string() {
             let expose = List::default();
-            assert_roundtrip!(expose, vec!["HELLO", "WORLD"].into());
+            assert_roundtrip!(expose, vec!["HELLO", "WORLD"]);
 
-            let err = Err(InvalidValue {
-                message: "Must be a string.".to_owned(),
-                path: "[1]".to_owned(),
-            });
-            assert_eq!(
-                expose.process(Value::Array(vec!["HELLO".into(), 10.into()])),
-                err,
+            assert_err!(
+                expose,
+                [
+                    Value::Array(vvec![10, "HELLO"]),
+                    Value::Array(vvec![true, "HELLO"]),
+                ],
+                "Must be a string.",
+                path = "[0]",
             );
-            assert_eq!(
-                expose.process(Value::Array(vec!["HELLO".into(), Value::Null])),
-                err,
+            assert_err!(
+                expose,
+                [
+                    Value::Array(vvec!["HELLO", vvec!["WORLD"]]),
+                    Value::Array(vvec!["HELLO", Value::Null]),
+                ],
+                "Must be a string.",
+                path = "[1]",
             );
         }
 
@@ -891,19 +899,15 @@ mod tests {
                 .item_type(Box::new(ListItem::Numeric(Numeric::default())))
                 .build()
                 .unwrap();
-            assert_roundtrip!(expose, vec![10, 20].into());
-
-            let err = Err(InvalidValue {
-                message: "Must be a number.".to_owned(),
-                path: "[0]".to_owned(),
-            });
-            assert_eq!(
-                expose.process(Value::Array(vec!["HELLO".into(), 10.into()])),
-                err,
-            );
-            assert_eq!(
-                expose.process(Value::Array(vec![Value::Null, 10.into()])),
-                err,
+            assert_roundtrip!(expose, vec![10, 20]);
+            assert_err!(
+                expose,
+                [
+                    Value::Array(vvec!["HELLO", 10]),
+                    Value::Array(vvec![Value::Null, 10]),
+                ],
+                "Must be a number.",
+                path = "[0]"
             );
         }
 
@@ -914,12 +918,8 @@ mod tests {
                 .item_type(Box::new(ListItem::Numeric(Numeric::default())))
                 .build()
                 .unwrap();
-            assert_roundtrip!(expose, vec![1].into());
-            assert_roundtrip!(expose, vec![1, 2, 3].into());
-            assert_eq!(
-                expose.process(Vec::<f64>::new().into()),
-                Err(InvalidValue::new("Must have at least 1 item(s).")),
-            );
+            assert_roundtrip!(expose, [vvec![1], vvec![1, 2, 3]]);
+            assert_err!(expose, Vec::<f64>::new(), "Must have at least 1 item(s).");
         }
 
         #[test]
@@ -929,12 +929,8 @@ mod tests {
                 .item_type(Box::new(ListItem::Numeric(Numeric::default())))
                 .build()
                 .unwrap();
-            assert_roundtrip!(expose, vec![1].into());
-            assert_roundtrip!(expose, vec![1, 2].into());
-            assert_eq!(
-                expose.process(vec![1, 2, 3].into()),
-                Err(InvalidValue::new("Must have at most 2 item(s).")),
-            );
+            assert_roundtrip!(expose, [vvec![1], vvec![1, 2]]);
+            assert_err!(expose, vvec![1, 2, 3], "Must have at most 2 item(s).");
         }
 
         #[test]
@@ -945,19 +941,12 @@ mod tests {
                 .item_type(Box::new(ListItem::Numeric(Numeric::default())))
                 .build()
                 .unwrap();
-            assert_roundtrip!(expose, vec![1].into());
-            assert_roundtrip!(expose, vec![1, 2].into());
-            assert_eq!(
-                expose.process(Vec::<f64>::new().into()),
-                Err(InvalidValue::new(
-                    "Must have between 1 and 3 items (inclusive)."
-                )),
-            );
-            assert_eq!(
-                expose.process(vec![1, 2, 3, 4].into()),
-                Err(InvalidValue::new(
-                    "Must have between 1 and 3 items (inclusive)."
-                )),
+            assert_roundtrip!(expose, vvec![1]);
+            assert_roundtrip!(expose, vvec![1, 2]);
+            assert_err!(
+                expose,
+                [Vec::<f64>::new(), vvec![1, 2, 3, 4]],
+                "Must have between 1 and 3 items (inclusive)."
             );
         }
     }
@@ -965,7 +954,6 @@ mod tests {
     #[test]
     fn process_bag() {
         let expose = Bag::default();
-
         assert_roundtrip!(
             expose,
             json!({
@@ -973,15 +961,10 @@ mod tests {
                 "bar": 2,
             })
         );
-
-        let type_err = Err(InvalidValue::new("Must be an object."));
-        assert_eq!(expose.process(10.into()), type_err);
-        assert_eq!(expose.process(true.into()), type_err);
+        assert_err!(expose, [10, true, "HELLO", vvec![10]], "Must be an object.");
     }
 
     mod process_capabilities {
-        use pretty_assertions::assert_eq;
-
         use super::*;
 
         static EXPOSE: Lazy<DeviceCapabilitiesSchema> = Lazy::new(|| {
@@ -1020,7 +1003,7 @@ mod tests {
                         .features(vec![Schema::Enum(WithProperty {
                             property: "enum".to_owned(),
                             type_: EnumBuilder::default()
-                                .values(vec!["RED".into(), "GREEN".into(), "BLUE".into()])
+                                .values(vvec!["RED", "GREEN", "BLUE"])
                                 .build()
                                 .unwrap(),
                         })])
@@ -1047,67 +1030,61 @@ mod tests {
                     "enum": "BLUE",
                 }),
             );
-
-            let type_err = Err(InvalidValue::new("Must be an object."));
-            assert_eq!(EXPOSE.process(10.into()), type_err);
-            assert_eq!(EXPOSE.process(true.into()), type_err);
-            assert_eq!(EXPOSE.process("HELLO".into()), type_err);
+            assert_err!(EXPOSE, [10, true, "HELLO"], "Must be an object.",);
         }
 
         #[test]
         fn error_path_toplevel() {
-            assert_eq!(
-                EXPOSE.process(json!({
+            assert_err!(
+                EXPOSE,
+                json!({
                     "num": "five",
-                })),
-                Err(InvalidValue {
-                    path: ".num".to_owned(),
-                    message: r#"Must be a number or one of the presets: ["default"]."#.to_owned(),
                 }),
+                r#"Must be a number or one of the presets: ["default"]."#,
+                path = ".num",
             );
         }
 
         #[test]
         fn error_path_nested_capability() {
-            assert_eq!(
-                EXPOSE.process(json!({
+            assert_err!(
+                EXPOSE,
+                json!({
                     "nested": {
                         "binary": "maybe",
                     },
-                })),
-                Err(InvalidValue {
-                    path: ".nested.binary".to_owned(),
-                    message: "Must be either true or false.".to_owned(),
                 }),
+                "Must be either true or false.",
+                path = ".nested.binary",
             );
         }
 
         #[test]
         fn error_path_nested_specific() {
-            assert_eq!(
-                EXPOSE.process(json!({
+            assert_err!(
+                EXPOSE,
+                json!({
                     "enum": "CYAN",
-                })),
-                Err(InvalidValue {
-                    path: ".enum".to_owned(),
-                    message: r#"Must be one of ["RED","GREEN","BLUE"]."#.to_owned(),
                 }),
+                r#"Must be one of ["RED","GREEN","BLUE"]."#,
+                path = ".enum",
             );
         }
 
         #[test]
         fn transform() {
-            assert_eq!(
-                EXPOSE.process(json!({
+            assert_ok!(
+                EXPOSE,
+                json!({
                     "text": "HELLO",
                     "num": "default",
                     "enum": "BLUE",
-                })),
-                Ok(json!({
+                }),
+                json!({
                     "text": "HELLO",
                     "num": 25.0,
                     "enum": "BLUE",
-                })),
+                }),
             );
         }
 
@@ -1124,29 +1101,27 @@ mod tests {
 
         #[test]
         fn unknown_toplevel() {
-            assert_eq!(
-                EXPOSE.process(json!({
+            assert_err!(
+                EXPOSE,
+                json!({
                     "unknown": 10,
-                })),
-                Err(InvalidValue {
-                    path: ".unknown".to_owned(),
-                    message: "Unknown property.".to_owned(),
                 }),
+                "Unknown property.",
+                path = ".unknown",
             );
         }
 
         #[test]
         fn unknown_nested() {
-            assert_eq!(
-                EXPOSE.process(json!({
+            assert_err!(
+                EXPOSE,
+                json!({
                     "nested": {
                         "unknown": 10,
                     },
-                })),
-                Err(InvalidValue {
-                    path: ".nested.unknown".to_owned(),
-                    message: "Unknown property.".to_owned(),
                 }),
+                "Unknown property.",
+                path = ".nested.unknown",
             );
         }
 
@@ -1184,14 +1159,13 @@ mod tests {
                     "retain": true,
                 })
             );
-            assert_eq!(
-                expose.process(json!({
+            assert_err!(
+                expose,
+                json!({
                     "unknown": 10,
-                })),
-                Err(InvalidValue {
-                    path: ".unknown".to_owned(),
-                    message: "Unknown property.".to_owned(),
-                })
+                }),
+                "Unknown property.",
+                path = ".unknown",
             );
         }
     }

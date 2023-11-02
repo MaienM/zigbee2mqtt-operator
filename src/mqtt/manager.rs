@@ -25,9 +25,10 @@ use super::{
 };
 use crate::{
     background_task,
-    error::Error,
+    error::{Error, ErrorWithMeta},
     event_manager::{EventCore, EventType},
     sync_utils::LockableNotify,
+    with_source::ValueWithSource,
     TIMEOUT,
 };
 
@@ -725,7 +726,7 @@ impl Manager {
             .await
     }
 
-    pub async fn restart_zigbee2mqtt(self: &Arc<Self>) -> Result<(), Error> {
+    pub async fn restart_zigbee2mqtt(self: &Arc<Self>) -> Result<(), ErrorWithMeta> {
         Restarter::new(self.clone()).await?.run().await
     }
 
@@ -739,9 +740,9 @@ impl Manager {
 
     pub async fn rename_device(
         self: &Arc<Self>,
-        ieee_address: &str,
-        friendly_name: &str,
-    ) -> Result<(), Error> {
+        ieee_address: ValueWithSource<String>,
+        friendly_name: ValueWithSource<String>,
+    ) -> Result<(), ErrorWithMeta> {
         DeviceRenamer::new(self.clone())
             .await?
             .run(ieee_address, friendly_name)
@@ -750,15 +751,15 @@ impl Manager {
 
     pub async fn get_device_options_manager(
         self: &Arc<Self>,
-        ieee_address: String,
+        ieee_address: ValueWithSource<String>,
     ) -> Result<DeviceOptionsManager, Error> {
         DeviceOptionsManager::new(self.clone(), ieee_address).await
     }
 
     pub async fn get_device_capabilities_manager(
         self: &Arc<Self>,
-        ieee_address: String,
-        friendly_name: String,
+        ieee_address: ValueWithSource<String>,
+        friendly_name: ValueWithSource<String>,
     ) -> Result<DeviceCapabilitiesManager, Error> {
         DeviceCapabilitiesManager::new(self.clone(), ieee_address, friendly_name).await
     }
@@ -773,24 +774,27 @@ impl Manager {
 
     pub async fn create_group(
         self: &Arc<Self>,
-        id: Option<usize>,
-        friendly_name: &str,
-    ) -> Result<usize, Error> {
+        id: ValueWithSource<Option<usize>>,
+        friendly_name: ValueWithSource<String>,
+    ) -> Result<usize, ErrorWithMeta> {
         GroupCreator::new(self.clone())
             .await?
             .run(id, friendly_name)
             .await
     }
 
-    pub async fn delete_group(self: &Arc<Self>, id: usize) -> Result<(), Error> {
+    pub async fn delete_group(
+        self: &Arc<Self>,
+        id: ValueWithSource<usize>,
+    ) -> Result<(), ErrorWithMeta> {
         GroupDeletor::new(self.clone()).await?.run(id).await
     }
 
     pub async fn rename_group(
         self: &Arc<Self>,
-        id: usize,
-        friendly_name: &str,
-    ) -> Result<(), Error> {
+        id: ValueWithSource<usize>,
+        friendly_name: ValueWithSource<String>,
+    ) -> Result<(), ErrorWithMeta> {
         GroupRenamer::new(self.clone())
             .await?
             .run(id, friendly_name)
@@ -799,9 +803,9 @@ impl Manager {
 
     pub async fn add_group_member(
         self: &Arc<Self>,
-        group: usize,
-        device: &str,
-    ) -> Result<(), Error> {
+        group: ValueWithSource<usize>,
+        device: ValueWithSource<String>,
+    ) -> Result<(), ErrorWithMeta> {
         GroupMemberAdder::new(self.clone())
             .await?
             .run(group, device)
@@ -810,9 +814,9 @@ impl Manager {
 
     pub async fn remove_group_member(
         self: &Arc<Self>,
-        group: usize,
-        device: &str,
-    ) -> Result<(), Error> {
+        group: ValueWithSource<usize>,
+        device: ValueWithSource<String>,
+    ) -> Result<(), ErrorWithMeta> {
         GroupMemberRemover::new(self.clone())
             .await?
             .run(group, device)
@@ -821,8 +825,8 @@ impl Manager {
 
     pub async fn get_group_options_manager(
         self: &Arc<Self>,
-        id: usize,
-    ) -> Result<GroupOptionsManager, Error> {
+        id: ValueWithSource<usize>,
+    ) -> Result<GroupOptionsManager, ErrorWithMeta> {
         GroupOptionsManager::new(self.clone(), id).await
     }
 }

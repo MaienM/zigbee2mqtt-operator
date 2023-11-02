@@ -18,19 +18,21 @@ use tracing::{error_span, info_span};
 use crate::{
     background_task,
     crds::{Device, Group, Instance, InstanceHandleUnmanaged, Instanced},
-    error::{EmittableResult, EmittableResultFuture, Error},
+    error::Error,
     event_manager::{EventManager, EventType},
     mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
     status_manager::StatusManager,
-    Context, EmittedError, EventCore, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL,
+    with_source::{vws, vws_sub},
+    Context, ErrorWithMeta, EventCore, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt,
+    RECONCILE_INTERVAL,
 };
 
 #[async_trait]
 impl Reconciler for Instance {
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        let eventmanager = EventManager::new(ctx.client.clone(), self);
+    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+        let eventmanager = EventManager::new(ctx.client.clone(), self.get_ref());
 
-        let manager = self.setup_manager(&ctx, &eventmanager).await?;
+        let manager = self.setup_manager(&ctx).await?;
         self.process_unmanaged::<Device>(&ctx, &manager, &eventmanager)
             .await?;
         self.process_unmanaged::<Group>(&ctx, &manager, &eventmanager)
@@ -40,8 +42,8 @@ impl Reconciler for Instance {
         Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 
-    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, EmittedError> {
-        let manager = ctx.state.managers.remove(&self.full_name()).await;
+    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+        let manager = ctx.state.managers.remove(&self.get_ref().full_name()).await;
         if let Some(manager) = manager {
             if let Ok(manager) = manager.get(Duration::from_secs(60)).await {
                 manager.close(None).await;
@@ -53,51 +55,39 @@ impl Reconciler for Instance {
     }
 }
 impl Instance {
-    async fn to_options(
-        &self,
-        ctx: &Arc<Context>,
-        eventmanager: &EventManager,
-    ) -> Result<Options, EmittedError> {
+    async fn to_options(&self, ctx: &Arc<Context>) -> Result<Options, ErrorWithMeta> {
         let mut options = Options {
-            client_id: self.full_name(),
+            client_id: self.get_ref().full_name(),
             host: self.spec.host.clone(),
             port: self.spec.port,
             credentials: None,
             base_topic: self.spec.base_topic.clone(),
         };
 
-        if let Some(cred) = &self.spec.credentials {
+        if let Some(cred) = vws!(self.spec.credentials).transpose() {
             options.credentials = Some(Credentials {
-                username: cred
-                    .username
-                    .get(&ctx.client, self)
-                    .emit_event(eventmanager, "spec.credentials.username")
-                    .await?,
-                password: cred
-                    .password
-                    .get(&ctx.client, self)
-                    .emit_event(eventmanager, "spec.credentials.password")
-                    .await?,
+                username: vws_sub!(cred.username).get(&ctx.client, self).await?.take(),
+                password: vws_sub!(cred.password).get(&ctx.client, self).await?.take(),
             });
         }
 
         Ok(options)
     }
 
-    async fn setup_manager(
-        &self,
-        ctx: &Arc<Context>,
-        eventmanager: &EventManager,
-    ) -> Result<Arc<Manager>, EmittedError> {
-        let manager_awaitable = ctx.state.managers.get_or_create(self.full_name()).await;
+    async fn setup_manager(&self, ctx: &Arc<Context>) -> Result<Arc<Manager>, ErrorWithMeta> {
+        let manager_awaitable = ctx
+            .state
+            .managers
+            .get_or_create(self.get_ref().full_name())
+            .await;
 
         // Apply options to manager. If this results in an error this means the manager must be recreated so we discard it.
-        let options = self.to_options(ctx, eventmanager).await?;
+        let options = self.to_options(ctx).await?;
         let manager = match manager_awaitable.get_immediate().await {
             Some(Ok(manager)) => match manager.update_options(options.clone()).await {
                 Ok(_) => Some(manager),
                 Err(err) => {
-                    info_span!("replacing manager", id = self.full_name(), ?err);
+                    info_span!("replacing manager", id = self.get_ref().full_name(), ?err);
                     manager_awaitable.clear().await;
                     manager.close(None).await;
                     None
@@ -111,20 +101,16 @@ impl Instance {
         }
 
         let (manager, mut status_receiver) =
-            match timeout(Duration::from_secs(30), Manager::new(options)).await {
-                Ok(result) => result,
-                Err(_) => Err(Error::ActionFailed(
-                    "timeout while starting manager instance".to_string(),
-                    None,
-                )),
-            }
-            .emit_event_nopath(eventmanager)
-            .await?;
+            timeout(Duration::from_secs(30), Manager::new(options))
+                .await
+                .map_err(|_| {
+                    Error::ActionFailed("timeout while starting manager instance".to_string(), None)
+                })??;
 
         spawn(background_task!(
-            format!("status reporter for instance {id}", id = self.id()),
+            format!("status reporter for instance {}", self.full_name()),
             {
-                let eventmanager = EventManager::new(ctx.client.clone(), self);
+                let eventmanager = EventManager::new(ctx.client.clone(), self.get_ref());
                 let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
                 let lock = manager_awaitable.clone();
                 async move {
@@ -189,7 +175,7 @@ impl Instance {
         ctx: &Arc<Context>,
         manager: &Arc<Manager>,
         eventmanager: &EventManager,
-    ) -> Result<(), EmittedError>
+    ) -> Result<(), ErrorWithMeta>
     where
         T: ManagedResource,
         <T as ManagedResource>::Resource: Clone + Debug + for<'de> Deserialize<'de>,
@@ -202,12 +188,11 @@ impl Instance {
             return Ok(());
         }
 
-        let kubernetes_identifiers = async {
+        let kubernetes_identifiers = {
             let api =
                 Api::<T::Resource>::namespaced(ctx.client.clone(), &self.namespace().unwrap());
             let lp = ListParams::default();
-            Ok(api
-                .list(&lp)
+            api.list(&lp)
                 .await
                 .map_err(|err| {
                     Error::ActionFailed(
@@ -216,16 +201,12 @@ impl Instance {
                     )
                 })?
                 .iter()
-                .filter(|r| r.get_instance_fullname() == self.full_name())
+                .filter(|r| *r.get_instance_fullname() == self.get_ref().full_name())
                 .filter_map(T::kubernetes_resource_identifier)
-                .collect::<HashSet<_>>())
-        }
-        .emit_event_nopath(eventmanager)
-        .await?;
+                .collect::<HashSet<_>>()
+        };
 
-        let zigbee2mqtt_resources = T::get_zigbee2mqtt(manager)
-            .emit_event_nopath(eventmanager)
-            .await?;
+        let zigbee2mqtt_resources = T::get_zigbee2mqtt(manager).await?;
 
         for (id, name) in zigbee2mqtt_resources {
             if kubernetes_identifiers.contains(&id) {
@@ -251,9 +232,7 @@ impl Instance {
                 .await;
 
             if mode == &InstanceHandleUnmanaged::Delete {
-                T::delete_zigbee2mqtt(manager, id)
-                    .emit_event_nopath(eventmanager)
-                    .await?;
+                T::delete_zigbee2mqtt(manager, id).await?;
             }
         }
 
@@ -264,13 +243,11 @@ impl Instance {
         &self,
         manager: &Arc<Manager>,
         eventmanager: &EventManager,
-    ) -> Result<(), EmittedError> {
+    ) -> Result<(), ErrorWithMeta> {
         let restart_required = manager
             .get_bridge_info_tracker()
-            .emit_event_nopath(eventmanager)
             .await?
             .get()
-            .emit_event_nopath(eventmanager)
             .await?
             .restart_required;
         if restart_required {
@@ -283,10 +260,7 @@ impl Instance {
                     field_path: None,
                 })
             .await;
-            manager
-                .restart_zigbee2mqtt()
-                .emit_event_nopath(eventmanager)
-                .await?;
+            manager.restart_zigbee2mqtt().await?;
         }
         Ok(())
     }
@@ -309,7 +283,10 @@ trait ManagedResource {
     ) -> Result<Vec<(Self::Identifier, String)>, Error>;
 
     /// Delete the Zigbee2MQTT instance with the given identifier.
-    async fn delete_zigbee2mqtt(manager: &Arc<Manager>, id: Self::Identifier) -> Result<(), Error>;
+    async fn delete_zigbee2mqtt(
+        manager: &Arc<Manager>,
+        id: Self::Identifier,
+    ) -> Result<(), ErrorWithMeta>;
 }
 
 #[async_trait]
@@ -341,11 +318,11 @@ impl ManagedResource for Device {
     async fn delete_zigbee2mqtt(
         _manager: &Arc<Manager>,
         _id: Self::Identifier,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ErrorWithMeta> {
         Err(Error::ActionFailed(
             "deleting of unmanaged devices in Zigbee2MQTT is not supported".to_owned(),
             None,
-        ))
+        ))?
     }
 }
 
@@ -375,7 +352,10 @@ impl ManagedResource for Group {
             .collect())
     }
 
-    async fn delete_zigbee2mqtt(manager: &Arc<Manager>, id: Self::Identifier) -> Result<(), Error> {
-        manager.delete_group(id).await
+    async fn delete_zigbee2mqtt(
+        manager: &Arc<Manager>,
+        id: Self::Identifier,
+    ) -> Result<(), ErrorWithMeta> {
+        manager.delete_group(id.into()).await
     }
 }

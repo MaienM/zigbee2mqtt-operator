@@ -11,9 +11,10 @@ use super::super::{
     subscription::{TopicStream, TopicSubscription},
 };
 use crate::{
-    error::{EmittableResult, EmittableResultFuture, EmittedError, Error},
+    error::{Error, ErrorWithMeta},
     event_manager::{EventManager, EventType},
     mqtt::exposes::Processor,
+    with_source::ValueWithSource,
     EventCore, TIMEOUT,
 };
 
@@ -112,7 +113,7 @@ where
         })
     }
 
-    pub async fn request(&mut self, data: T::Request) -> Result<T::Response, Error> {
+    pub async fn request(&mut self, data: T::Request) -> Result<T::Response, ErrorWithMeta> {
         // Clear receive queue as anything already in it is unrelated to the request we're about to perform.
         self.subscription = self.subscription.resubscribe();
 
@@ -127,8 +128,7 @@ where
             .stream_swap()
             .filter_lag()
             .parse_payload::<RequestResponse<T::Response>>()
-            .filter_ok(|v| T::matches(&data, v))
-            .map_ok(RequestResponse::convert)
+            .filter_map_ok(|v| T::process_response(&data, v))
             .next_noclose_timeout(*TIMEOUT)
             .await
     }
@@ -138,7 +138,10 @@ pub(crate) trait BridgeRequestType {
     type Request: Serialize + Clone + Sync;
     type Response: for<'de> Deserialize<'de>;
 
-    fn matches(request: &Self::Request, response: &RequestResponse<Self::Response>) -> bool;
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>>;
 }
 #[derive(Deserialize, Debug)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -146,12 +149,20 @@ pub(crate) enum RequestResponse<T> {
     Ok { data: T },
     Error { error: String },
 }
-impl<T> RequestResponse<T> {
-    fn convert(self) -> Result<T, Error> {
+impl<V> RequestResponse<V> {
+    pub fn convert(self) -> Result<V, Error> {
         match self {
             RequestResponse::Ok { data } => Ok(data),
             RequestResponse::Error { error } => Err(Error::Zigbee2MQTTError(error)),
         }
+    }
+}
+impl<V, E> From<RequestResponse<V>> for Result<V, E>
+where
+    E: From<Error>,
+{
+    fn from(value: RequestResponse<V>) -> Self {
+        value.convert().map_err(E::from)
     }
 }
 
@@ -177,20 +188,17 @@ pub(super) trait ConfigurationManagerInner {
     /// The (singular) name of the category of configuration being managed.
     const NAME: &'static str;
 
-    /// The [`EventCore::field_path`] for the configuration of the resource.
-    const PATH: &'static str;
-
     /// Get the configuration schema.
-    async fn schema(
-        &mut self,
-        eventmanager: &EventManager,
-    ) -> Result<Box<dyn Processor + Send + Sync>, EmittedError>;
+    async fn schema(&mut self) -> Result<Box<dyn Processor + Send + Sync>, ErrorWithMeta>;
 
     /// Get the current configuration.
-    async fn get(&mut self, eventmanager: &EventManager) -> Result<Configuration, EmittedError>;
+    async fn get(&mut self) -> Result<Configuration, ErrorWithMeta>;
 
     /// Attempt to set the configuration and return the resulting configuration.
-    async fn set(&mut self, configuration: &Configuration) -> Result<Configuration, Error>;
+    async fn set(
+        &mut self,
+        configuration: &ValueWithSource<Configuration>,
+    ) -> Result<Configuration, ErrorWithMeta>;
 
     /// Whether to set a property which is currently set but missing from the new configuration to null.
     fn clear_property(key: &str) -> bool;
@@ -200,11 +208,11 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
     /// Update the configuration.
     async fn sync(
         &mut self,
-        eventmanager: &mut EventManager,
-        mut configuration: Configuration,
-    ) -> Result<(), EmittedError> {
+        eventmanager: &EventManager,
+        mut configuration: ValueWithSource<Configuration>,
+    ) -> Result<(), ErrorWithMeta> {
         // Get the current configuration.
-        let current = self.get(eventmanager).await?;
+        let current = self.get().await?;
 
         // Insert null for properties in the current configuration that should be cleared.
         for key in current.keys() {
@@ -214,21 +222,21 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
         }
 
         // Use schema to validate/process configuration.
-        let schema = self.schema(eventmanager).await?;
-        let configuration = schema
-            .process(configuration.into())
-            .map_err(Into::into)
-            .emit_event(eventmanager, Self::PATH)
-            .await?;
-        let configuration: Configuration = serde_json::from_value(configuration)
-            .map_err(|err| {
-                Error::ActionFailed(
-                    "processing configuration yielded non-object".to_owned(),
-                    Some(Arc::new(Box::new(err))),
-                )
+        let schema = self.schema().await?;
+        let configuration = configuration.transform(|v| Value::from(v.take()));
+        let configuration = configuration.transform(|v| schema.process(v)).transpose()?;
+        let configuration: ValueWithSource<Configuration> = configuration
+            .transform(|v| {
+                let (value, source) = v.split();
+                serde_json::from_value(value).map_err(|err| {
+                    Error::ActionFailed(
+                        "processing configuration yielded non-object".to_owned(),
+                        Some(Arc::new(Box::new(err))),
+                    )
+                    .caused_by(&source)
+                })
             })
-            .emit_event(eventmanager, Self::PATH)
-            .await?;
+            .transpose()?;
 
         // Log what changes are going to be made.
         let differences = find_differences(&configuration, &current);
@@ -247,7 +255,9 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
                     )),
                     reason: "Created".to_string(),
                     type_: EventType::Normal,
-                    field_path: Some(format!("{}.{}", Self::PATH, difference.key)),
+                    field_path: configuration
+                        .source()
+                        .map(|source| format!("{source}.{key}", key = difference.key)),
                 })
                 .await;
         }
@@ -256,10 +266,7 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
         }
 
         // Apply the configuration.
-        let result = self
-            .set(&configuration)
-            .emit_event(eventmanager, Self::PATH)
-            .await?;
+        let result = self.set(&configuration).await?;
 
         // Verify that the result matches the desired configuration. If this is not the case, log the mismatches and return an error.
         let differences = find_differences(&configuration, &result);
@@ -278,16 +285,17 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
                     )),
                     reason: "Created".to_string(),
                     type_: EventType::Warning,
-                    field_path: Some(format!("{path}.{key}", path=Self::PATH)),
+                    field_path: configuration.source().map(|source| format!("{source}.{key}")),
                 })
                 .await;
         }
         if !differences.is_empty() {
-            return Err(Error::InvalidResource {
-                field_path: String::new(),
-                message: format!("failed to set at least one {name}", name = Self::NAME),
-            })
-            .fake_emit_event();
+            return Err(Error::InvalidResource(format!(
+                "failed to set at least one {name}",
+                name = Self::NAME
+            ))
+            .caused_by(&configuration)
+            .mark_published());
         }
 
         Ok(())
@@ -342,9 +350,9 @@ macro_rules! setup_configuration_manager {
         impl $name {
             pub async fn sync(
                 &mut self,
-                eventmanager: &mut EventManager,
-                configuration: Configuration,
-            ) -> Result<(), EmittedError> {
+                eventmanager: &EventManager,
+                configuration: ValueWithSource<Configuration>,
+            ) -> Result<(), ErrorWithMeta> {
                 ConfigurationManager::sync(self, eventmanager, configuration).await
             }
         }
