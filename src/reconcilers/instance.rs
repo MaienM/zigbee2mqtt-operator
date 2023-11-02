@@ -100,6 +100,13 @@ impl Instance {
             return Ok(manager);
         }
 
+        let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
+        statusmanager.update(|status| {
+            status.broker = false;
+            status.zigbee2mqtt = None;
+        });
+        statusmanager.sync().await;
+
         let (manager, mut status_receiver) =
             timeout(Duration::from_secs(30), Manager::new(options))
                 .await
@@ -116,18 +123,13 @@ impl Instance {
                 async move {
                     let _lock = lock; // Keep a reference to the manager's AwaitableValue as long as it is in use.
 
-                    statusmanager.update(|s| {
-                        s.broker = false;
-                        s.zigbee2mqtt = false;
-                    });
-                    statusmanager.sync().await;
-
                     while let Some(event) = status_receiver.recv().await {
                         eventmanager.publish((&event).into()).await;
                         statusmanager.update(|s| {
                             match event {
                                 Status::ConnectionStatus(ConnectionStatus::Active) => {
                                     s.broker = true;
+                                    s.zigbee2mqtt = Some(false);
                                 }
                                 Status::ConnectionStatus(
                                     ConnectionStatus::Inactive
@@ -136,16 +138,16 @@ impl Instance {
                                     | ConnectionStatus::Refused(_),
                                 ) => {
                                     s.broker = false;
-                                    s.zigbee2mqtt = false;
+                                    s.zigbee2mqtt = None;
                                 }
                                 Status::ConnectionStatus(_) => {}
 
                                 Status::Z2MStatus(Z2MStatus::HealthOk) => {
                                     s.broker = true;
-                                    s.zigbee2mqtt = true;
+                                    s.zigbee2mqtt = Some(true);
                                 }
                                 Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
-                                    s.zigbee2mqtt = false;
+                                    s.zigbee2mqtt = Some(false);
                                 }
                             };
                         });
@@ -155,6 +157,7 @@ impl Instance {
                 }
             },
             {
+                let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
                 let manager_awaitable = manager_awaitable.clone();
                 let manager = manager.clone();
                 |err| async move {
@@ -162,6 +165,12 @@ impl Instance {
                     manager_awaitable.clear().await;
                     let shutdown_reason = manager.close(Some(Box::new(err))).await;
                     manager_awaitable.invalidate(shutdown_reason).await;
+
+                    statusmanager.update(|status| {
+                        status.broker = false;
+                        status.zigbee2mqtt = None;
+                    });
+                    statusmanager.sync().await;
                 }
             }
         ));

@@ -79,7 +79,7 @@ pub struct InstanceStatus {
     pub broker: bool,
 
     /// Whether zigbee2mqtt is reachable and healthy.
-    pub zigbee2mqtt: bool,
+    pub zigbee2mqtt: Option<bool>,
 }
 /// How to handle a resource that exists in Zigbee2MQTT but not in K8s.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, PartialEq, Default)]
