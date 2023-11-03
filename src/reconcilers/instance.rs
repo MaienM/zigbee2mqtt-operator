@@ -145,20 +145,20 @@ pub(crate) use get_manager;
 
 #[async_trait]
 impl Reconciler for Instance {
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+    async fn reconcile(&self, ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta> {
         let eventmanager = EventManager::new(ctx.client.clone(), self.get_ref());
 
-        let manager = self.setup_manager(&ctx).await?;
-        self.process_unmanaged::<Device>(&ctx, &manager, &eventmanager)
+        let manager = self.setup_manager(ctx).await?;
+        self.process_unmanaged::<Device>(ctx, &manager, &eventmanager)
             .await?;
-        self.process_unmanaged::<Group>(&ctx, &manager, &eventmanager)
+        self.process_unmanaged::<Group>(ctx, &manager, &eventmanager)
             .await?;
         self.restart_if_needed(&manager, &eventmanager).await?;
 
         Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 
-    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+    async fn cleanup(&self, ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta> {
         let manager = ctx
             .state
             .managers

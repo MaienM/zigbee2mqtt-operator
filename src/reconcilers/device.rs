@@ -18,7 +18,7 @@ use crate::{
 
 #[async_trait]
 impl Reconciler for Device {
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+    async fn reconcile(&self, ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta> {
         let eventmanager = EventManager::new(ctx.client.clone(), self.get_ref());
         let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
         statusmanager.update(|s| {
@@ -50,7 +50,7 @@ impl Reconciler for Device {
         Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 
-    async fn cleanup(&self, _ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+    async fn cleanup(&self, _ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta> {
         Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 }

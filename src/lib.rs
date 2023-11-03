@@ -79,9 +79,9 @@ pub(crate) struct State {
 #[async_trait]
 pub trait Reconciler: Resource + HasStatus + Sized {
     /// Handler for [`kube::runtime::finalizer::Event::Apply`].
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta>;
+    async fn reconcile(&self, ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta>;
     /// Handler for [`kube::runtime::finalizer::Event::Cleanup`].
-    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta>;
+    async fn cleanup(&self, ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta>;
 }
 
 /// Wrap an async block that is expected to run forever.

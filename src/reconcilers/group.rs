@@ -26,7 +26,7 @@ struct BridgeGroupInfo {
 
 #[async_trait]
 impl Reconciler for Group {
-    async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+    async fn reconcile(&self, ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta> {
         let eventmanager = EventManager::new(ctx.client.clone(), self.get_ref());
         let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
 
@@ -61,7 +61,7 @@ impl Reconciler for Group {
         Ok(Action::requeue(*RECONCILE_INTERVAL))
     }
 
-    async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
+    async fn cleanup(&self, ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta> {
         let manager = get_manager!(self, ctx);
 
         if let Some(status) = vws!(self.status).transpose() {

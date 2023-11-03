@@ -47,11 +47,11 @@ where
     finalizer(&api, FINALIZER, resource, |event| async {
         match event {
             Finalizer::Apply(doc) => {
-                let result = doc.reconcile(ctx.clone()).await;
+                let result = doc.reconcile(&ctx).await;
                 result.publish_unwrap_error(&ctx, doc.get_ref()).await
             }
             Finalizer::Cleanup(doc) => {
-                let result = doc.cleanup(ctx.clone()).await;
+                let result = doc.cleanup(&ctx).await;
                 result.publish_unwrap_error(&ctx, doc.get_ref()).await
             }
         }
