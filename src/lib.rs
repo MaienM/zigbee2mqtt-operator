@@ -10,9 +10,8 @@ use error::ErrorWithMeta;
 pub use event_manager::EventCore;
 use k8s_openapi::api::core::v1::ObjectReference;
 use kube::{core::object::HasStatus, runtime::controller::Action, Client, Resource};
-use mqtt::Manager;
 use once_cell::sync::Lazy;
-use sync_utils::AwaitableMap;
+use reconcilers::instance::InstanceTracker;
 
 pub mod crds;
 pub mod error;
@@ -53,21 +52,27 @@ pub static RECONCILE_INTERVAL_FAILURE: Lazy<Duration> = Lazy::new(|| {
 pub struct Context {
     /// Kubernetes client.
     pub client: Client,
+
     /// The current state.
-    pub state: Arc<State>,
+    pub(crate) state: Arc<State>,
+}
+impl Context {
+    /// Create new instance.
+    #[allow(clippy::must_use_candidate)]
+    pub fn new(client: Client) -> Self {
+        Self {
+            state: Arc::new(State {
+                managers: InstanceTracker::new(client.clone()),
+            }),
+            client,
+        }
+    }
 }
 
 /// Shared state of the application.
-pub struct State {
+pub(crate) struct State {
     /// The Zigbee2MQTT manager for each instance.
-    pub managers: AwaitableMap<Arc<Manager>>,
-}
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            managers: AwaitableMap::new("instance manager".to_string()),
-        }
-    }
+    pub(crate) managers: Arc<InstanceTracker>,
 }
 
 /// Reconcile actions for a CRD.

@@ -8,6 +8,7 @@ use std::{
 use async_trait::async_trait;
 use kube::runtime::controller::Action;
 
+use super::instance::get_manager;
 use crate::{
     crds::{Group, Instanced},
     error::Error,
@@ -15,7 +16,7 @@ use crate::{
     mqtt::{BridgeGroup, Manager},
     status_manager::StatusManager,
     with_source::{vws, vws_sub, ValueWithSource},
-    Context, ErrorWithMeta, EventCore, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL, TIMEOUT,
+    Context, ErrorWithMeta, EventCore, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL,
 };
 
 struct BridgeGroupInfo {
@@ -35,7 +36,7 @@ impl Reconciler for Group {
             s.id = None;
         });
 
-        let manager = self.get_manager(&ctx).await?;
+        let manager = get_manager!(self, ctx);
 
         statusmanager.update(|s| {
             s.exists = Some(false);
@@ -61,7 +62,7 @@ impl Reconciler for Group {
     }
 
     async fn cleanup(&self, ctx: Arc<Context>) -> Result<Action, ErrorWithMeta> {
-        let manager = self.get_manager(&ctx).await?;
+        let manager = get_manager!(self, ctx);
 
         if let Some(status) = vws!(self.status).transpose() {
             if let Some(id) = vws_sub!(status.id).transpose() {
@@ -81,15 +82,6 @@ impl Group {
             .map(|id| ValueWithSource::new(id, Some("status.id".to_owned())));
         let from_spec = vws!(self.spec.id).transpose();
         from_status.or(from_spec)
-    }
-
-    async fn get_manager(&self, ctx: &Arc<Context>) -> Result<Arc<Manager>, ErrorWithMeta> {
-        let instance = self.get_instance_fullname();
-        ctx.state
-            .managers
-            .get(&instance, *TIMEOUT)
-            .await
-            .map_err(|err| err.caused_by(&instance))
     }
 
     async fn get_or_create_group(

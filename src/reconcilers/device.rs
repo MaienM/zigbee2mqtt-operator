@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kube::runtime::controller::Action;
 
+use super::instance::get_manager;
 use crate::{
     crds::{Device, Instanced},
     error::Error,
@@ -12,7 +13,7 @@ use crate::{
     mqtt::Manager,
     status_manager::StatusManager,
     with_source::{vws, ValueWithSource},
-    Context, ErrorWithMeta, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL, TIMEOUT,
+    Context, ErrorWithMeta, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL,
 };
 
 #[async_trait]
@@ -25,13 +26,7 @@ impl Reconciler for Device {
             s.synced = None;
         });
 
-        let instance = self.get_instance_fullname();
-        let manager = ctx
-            .state
-            .managers
-            .get(&instance, *TIMEOUT)
-            .await
-            .map_err(|err| err.caused_by(&instance))?;
+        let manager = get_manager!(self, ctx);
 
         statusmanager.update(|s| {
             s.exists = Some(false);

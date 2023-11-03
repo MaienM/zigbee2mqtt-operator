@@ -22,8 +22,7 @@ use tracing::{error_span, info_span};
 use zigbee2mqtt_operator::{
     crds::{Device, Group, Instance},
     error::{Error, ErrorWithMetaFinalizer},
-    Context, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt, State,
-    RECONCILE_INTERVAL_FAILURE,
+    Context, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt, RECONCILE_INTERVAL_FAILURE,
 };
 
 pub static FINALIZER: &str = "zigbee2mqtt.maienm.com";
@@ -111,11 +110,7 @@ async fn main() {
     env_logger::init();
 
     let client = Client::try_default().await.unwrap();
-
-    let ctx = Arc::new(Context {
-        client: client.clone(),
-        state: Arc::new(State::default()),
-    });
+    let ctx = Arc::new(Context::new(client.clone()));
 
     join!(
         start_controller::<Instance>(client.clone(), ctx.clone()),

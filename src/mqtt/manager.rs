@@ -614,10 +614,6 @@ impl Manager {
         Error::ManagerShutDown(self.shutdown_reason.get().unwrap().clone())
     }
 
-    pub fn get_id<'a>(self: &'a Arc<Self>) -> &'a String {
-        &self.id
-    }
-
     /// Subscribe to incoming messages on a topic pattern.
     pub(crate) async fn subscribe_topic(
         self: &Arc<Self>,
@@ -828,5 +824,16 @@ impl Manager {
         id: ValueWithSource<usize>,
     ) -> Result<GroupOptionsManager, ErrorWithMeta> {
         GroupOptionsManager::new(self.clone(), id).await
+    }
+}
+impl Debug for Manager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Manager")
+            .field("id", &self.id)
+            .field("options", &self.options)
+            .field("shutdown_reason", &self.shutdown_reason)
+            .field("shutdown_done", &self.shutdown_done)
+            .field("subscriptions", &self.subscriptions)
+            .finish_non_exhaustive()
     }
 }
