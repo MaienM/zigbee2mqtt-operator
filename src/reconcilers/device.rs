@@ -7,7 +7,7 @@ use kube::runtime::controller::Action;
 
 use super::instance::get_manager;
 use crate::{
-    crds::{Device, Instanced},
+    crds::Device,
     error::Error,
     event_manager::{EventCore, EventManager, EventType},
     mqtt::Manager,

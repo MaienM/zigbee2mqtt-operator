@@ -10,7 +10,7 @@ use kube::runtime::controller::Action;
 
 use super::instance::get_manager;
 use crate::{
-    crds::{Group, Instanced},
+    crds::Group,
     error::Error,
     event_manager::{EventManager, EventType},
     mqtt::{BridgeGroup, Manager},

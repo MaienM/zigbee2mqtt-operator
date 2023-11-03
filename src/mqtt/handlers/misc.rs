@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::super::manager::Manager;
 use super::lib::{
     add_wrapper_new, BridgeRequest, BridgeRequestType, RequestResponse, TopicTracker,
     TopicTrackerType,

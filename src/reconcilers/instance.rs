@@ -123,7 +123,7 @@ pub(crate) enum InstanceTrackStatus {
 }
 macro_rules! get_manager {
     ($self:ident, $ctx:ident) => {{
-        let fullname = $self.get_instance_fullname();
+        let fullname = crate::crds::Instanced::get_instance_fullname($self);
         match $ctx.state.managers.get(&fullname).await? {
             super::instance::InstanceTrackStatus::Missing => {
                 return Err(Error::InvalidResource("instance does not exist".to_owned())

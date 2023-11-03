@@ -14,13 +14,11 @@ use super::{
     },
     lib::{
         add_wrapper_new, setup_configuration_manager, BridgeRequest, BridgeRequestType,
-        Configuration, ConfigurationManager, ConfigurationManagerInner, RequestResponse,
-        TopicTracker, TopicTrackerType,
+        Configuration, ConfigurationManagerInner, RequestResponse, TopicTracker, TopicTrackerType,
     },
 };
 use crate::{
     error::{Error, ErrorWithMeta},
-    event_manager::EventManager,
     mqtt::exposes::Processor,
     with_source::ValueWithSource,
     TIMEOUT,

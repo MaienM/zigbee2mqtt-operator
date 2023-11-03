@@ -172,7 +172,9 @@ macro_rules! add_wrapper_new {
         $name:ident, $type:ident
     ) => {
         impl $name {
-            pub async fn new(manager: Arc<Manager>) -> Result<Self, Error> {
+            pub async fn new(
+                manager: Arc<crate::mqtt::Manager>,
+            ) -> Result<Self, crate::error::Error> {
                 return Ok(Self($type::new(manager).await?.into()));
             }
         }
@@ -345,15 +347,22 @@ fn find_differences(wanted: &Configuration, actual: &Configuration) -> Vec<Diffe
 macro_rules! setup_configuration_manager {
     ($name:ident) => {
         #[async_trait]
-        impl ConfigurationManager for $name {
+        impl crate::mqtt::handlers::lib::ConfigurationManager for $name {
         }
         impl $name {
             pub async fn sync(
                 &mut self,
-                eventmanager: &EventManager,
-                configuration: ValueWithSource<Configuration>,
-            ) -> Result<(), ErrorWithMeta> {
-                ConfigurationManager::sync(self, eventmanager, configuration).await
+                eventmanager: &crate::event_manager::EventManager,
+                configuration: crate::with_source::ValueWithSource<
+                    crate::mqtt::handlers::lib::Configuration,
+                >,
+            ) -> Result<(), crate::error::ErrorWithMeta> {
+                crate::mqtt::handlers::lib::ConfigurationManager::sync(
+                    self,
+                    eventmanager,
+                    configuration,
+                )
+                .await
             }
         }
     };
