@@ -218,13 +218,6 @@ impl Default for ListItem {
     }
 }
 
-/// Convert a [`Value`] to string.
-macro_rules! to_json {
-    ($val:expr) => {
-        serde_json::to_string(&$val).unwrap()
-    };
-}
-
 /// Trait to check whether a property is defined.
 #[enum_dispatch]
 trait PropertyHolder {
@@ -265,15 +258,15 @@ impl Processor for Binary {
         } else if Some(&*value) == self.value_toggle.as_ref() {
             Err(Error::InvalidResource(format!(
                 "This will toggle the state on every reconcile. Use {value_on} or {value_off} instead.",
-                value_on = to_json!(self.value_on),
-                value_off = to_json!(self.value_off),
+                value_on = self.value_on,
+                value_off = self.value_off,
             )).caused_by(&value)
             )
         } else {
             Err(Error::InvalidResource(format!(
                 "Must be either {value_on} or {value_off}.",
-                value_on = to_json!(self.value_on),
-                value_off = to_json!(self.value_off),
+                value_on = self.value_on,
+                value_off = self.value_off,
             ))
             .caused_by(&value))
         }
@@ -291,13 +284,17 @@ impl Processor for Numeric {
         }
 
         let Some(num) = value.as_f64() else {
-            let preset_names = self.presets.iter().map(|p| &p.name).collect::<Vec<_>>();
+            let preset_names = self
+                .presets
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<_>>();
             return if preset_names.is_empty() {
                 Err(Error::InvalidResource("Must be a number.".to_owned()).caused_by(&value))
             } else {
                 Err(Error::InvalidResource(format!(
-                    "Must be a number or one of the presets: {preset_names}.",
-                    preset_names = to_json!(preset_names)
+                    "Must be a number or one of the presets: {}.",
+                    Value::from(preset_names),
                 ))
                 .caused_by(&value))
             };
@@ -348,8 +345,8 @@ impl Processor for Enum {
             Ok(value.take())
         } else {
             Err(Error::InvalidResource(format!(
-                "Must be one of {values}.",
-                values = to_json!(self.values),
+                "Must be one of {}.",
+                Value::from(self.values.clone()),
             ))
             .caused_by(&value))
         }
