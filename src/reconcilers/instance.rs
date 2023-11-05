@@ -345,7 +345,7 @@ impl Instance {
             return Ok(());
         }
 
-        let kubernetes_identifiers = {
+        let kubernetes_resources: HashSet<_> = {
             let api =
                 Api::<T::Resource>::namespaced(ctx.client.clone(), &self.namespace().unwrap());
             let lp = ListParams::default();
@@ -359,9 +359,28 @@ impl Instance {
                 })?
                 .iter()
                 .filter(|r| *r.get_instance_fullname() == self.get_ref().full_name())
-                .filter_map(T::kubernetes_resource_identifier)
-                .collect::<HashSet<_>>()
+                .map(T::kubernetes_resource_identifier)
+                .collect()
         };
+
+        let resource_count = kubernetes_resources.len();
+        let kubernetes_identifiers: HashSet<_> =
+            kubernetes_resources.into_iter().flatten().collect();
+        if kubernetes_identifiers.len() < resource_count {
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(format!(
+                        "Some {plural} are still reconciling, so cannot check for unmanaged resources.",
+                        plural = T::Resource::plural(&dt),
+                    )),
+                    reason: "Created".to_string(),
+                    type_: EventType::Warning,
+                    field_path: None,
+                })
+                .await;
+            return Ok(());
+        }
 
         let zigbee2mqtt_resources = T::get_zigbee2mqtt(manager).await?;
 
@@ -426,7 +445,7 @@ impl Instance {
 #[async_trait]
 trait ManagedResource {
     type Resource: Resource<Scope = NamespaceResourceScope> + Instanced;
-    type Identifier: PartialEq + Eq + Hash + Display + Send;
+    type Identifier: PartialEq + Eq + Hash + Debug + Display + Send;
 
     /// Get the management mode for the resource for the given instance.
     fn get_mode(instance: &Instance) -> &InstanceHandleUnmanaged;
