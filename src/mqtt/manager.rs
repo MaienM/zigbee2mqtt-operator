@@ -10,7 +10,7 @@ use tokio::{
     select, spawn,
     sync::{broadcast, mpsc, watch, Mutex, OnceCell},
     task::JoinSet,
-    time::{interval, sleep, Instant, MissedTickBehavior},
+    time::{sleep, Instant},
 };
 use tracing::{debug_span, error_span, info_span, trace_span, warn_span};
 use veil::Redact;
@@ -29,7 +29,7 @@ use crate::{
     event_manager::{EventCore, EventType},
     sync_utils::LockableNotify,
     with_source::ValueWithSource,
-    TIMEOUT,
+    RECONCILE_INTERVAL, RECONCILE_INTERVAL_FAILURE, TIMEOUT,
 };
 
 /// Check whether a topic matches a pattern following the MQTT wildcard rules.
@@ -526,21 +526,22 @@ impl Manager {
 
     async fn task_healthcheck(self: Arc<Self>) -> Result<(), Error> {
         let mut healthcheck = HealthChecker::new(self.clone()).await?;
-
-        let mut interval = interval(Duration::from_secs(30));
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
-            interval.tick().await;
-
-            let status = match healthcheck.get().await {
-                Ok(_) => Z2MStatus::HealthOk,
-                Err(err) => Z2MStatus::HealthError(err.to_string()),
+            let (status, interval) = match healthcheck.get().await {
+                Ok(_) => (Z2MStatus::HealthOk, *RECONCILE_INTERVAL),
+                Err(err) => (
+                    Z2MStatus::HealthError(err.to_string()),
+                    *RECONCILE_INTERVAL_FAILURE,
+                ),
             };
+
             let _ = self
                 .status_sender
                 .lock()
                 .await
                 .send(Status::Z2MStatus(status));
+
+            sleep(interval).await;
         }
     }
 
