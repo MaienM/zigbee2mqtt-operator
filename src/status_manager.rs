@@ -51,6 +51,10 @@ where
         };
     }
 
+    pub fn get(&self) -> &T::Status {
+        &self.current
+    }
+
     pub fn set(&mut self, status: T::Status) {
         self.current = status;
     }

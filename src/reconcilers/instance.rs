@@ -21,7 +21,7 @@ use tracing::{error_span, info_span, warn_span};
 
 use crate::{
     background_task,
-    crds::{Device, Group, Instance, InstanceHandleUnmanaged, Instanced},
+    crds::{Device, Group, Instance, InstanceHandleUnmanaged, InstanceStatus, Instanced},
     error::Error,
     event_manager::{EventManager, EventType},
     mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
@@ -35,8 +35,9 @@ use crate::{
 pub(crate) struct InstanceTracker {
     api: Api<Instance>,
     last_updated_at: Mutex<Instant>,
-    managers: RwLock<HashMap<String, Option<Arc<Manager>>>>,
+    managers: RwLock<HashMap<String, Option<InstanceTrackerEntry>>>,
 }
+type InstanceTrackerEntry = (Arc<Manager>, InstanceStatus);
 impl InstanceTracker {
     pub fn new(client: Client) -> Arc<Self> {
         Arc::new(Self {
@@ -64,7 +65,13 @@ impl InstanceTracker {
     async fn _get(self: &Arc<Self>, key: &String) -> InstanceTrackStatus {
         let managers = self.managers.read().await;
         match managers.get(key) {
-            Some(Some(manager)) => InstanceTrackStatus::Ready(manager.clone()),
+            Some(Some((manager, status))) => {
+                if status.zigbee2mqtt == Some(true) {
+                    InstanceTrackStatus::Ready(manager.clone())
+                } else {
+                    InstanceTrackStatus::Unhealthy
+                }
+            }
             Some(None) => InstanceTrackStatus::Pending,
             None => InstanceTrackStatus::Missing,
         }
@@ -118,7 +125,9 @@ pub(crate) enum InstanceTrackStatus {
     Missing,
     /// There is an instance with the provided full_name, but there is no manager for it yet.
     Pending,
-    /// There is an instance with the provided full_name, and there is also a manager for it.
+    /// There is an instance with the provided full_name, and there is a manager for it, but the Zigbee2MQTT instance is not healthy.
+    Unhealthy,
+    /// There is an instance with the provided full_name, and there is a manager for it, and the Zigbee2MQTT instance is healthy.
     Ready(Arc<Manager>),
 }
 macro_rules! get_manager {
@@ -129,12 +138,33 @@ macro_rules! get_manager {
                 return Err(Error::InvalidResource("instance does not exist".to_owned())
                     .caused_by(&fullname));
             }
-            super::instance::InstanceTrackStatus::Pending => {
+            status @ (super::instance::InstanceTrackStatus::Pending
+            | super::instance::InstanceTrackStatus::Unhealthy) => {
+                let problem = match status {
+                    super::instance::InstanceTrackStatus::Pending => "not yet ready",
+                    super::instance::InstanceTrackStatus::Unhealthy => "not healthy",
+                    _ => panic!("this is silly, this shouldn't be possible"),
+                };
                 tracing::info_span!(
-                    "instance used by resource is not yet ready, postponing reconcile",
+                    "instance used by resource is not usable, postponing reconcile",
+                    problem,
                     instance = *fullname,
                     id = crate::ObjectReferenceLocalExt::id(&$self.get_ref()),
                 );
+
+                let eventmanager = EventManager::new($ctx.client.clone(), $self.get_ref());
+                eventmanager
+                    .publish(EventCore {
+                        action: "Reconciling".to_string(),
+                        note: Some(format!(
+                            "instance used by resource is {problem}, postponing reconcile"
+                        )),
+                        reason: "Created".to_string(),
+                        type_: EventType::Warning,
+                        field_path: fullname.source().cloned(),
+                    })
+                    .await;
+
                 return Ok(Action::requeue(*crate::RECONCILE_INTERVAL_FAILURE));
             }
             super::instance::InstanceTrackStatus::Ready(manager) => manager,
@@ -159,14 +189,14 @@ impl Reconciler for Instance {
     }
 
     async fn cleanup(&self, ctx: &Arc<Context>) -> Result<Action, ErrorWithMeta> {
-        let manager = ctx
+        let entry = ctx
             .state
             .managers
             .managers
             .write()
             .await
             .remove(&self.get_ref().full_name());
-        if let Some(Some(manager)) = manager {
+        if let Some(Some((manager, _))) = entry {
             manager.close(None).await;
         }
 
@@ -200,7 +230,7 @@ impl Instance {
 
         // Apply options to manager. If this results in an error this means the manager must be recreated so we discard it.
         let options = self.to_options(ctx).await?;
-        if let Some(manager) = entry {
+        if let Some((manager, _)) = entry {
             if let Err(err) = manager.update_options(options.clone()).await {
                 info_span!("replacing manager", id = self.get_ref().full_name(), ?err);
                 manager.close(None).await;
@@ -208,7 +238,7 @@ impl Instance {
             }
         }
 
-        if let Some(manager) = entry {
+        if let Some((manager, _)) = entry {
             return Ok(manager.clone());
         }
 
@@ -225,13 +255,15 @@ impl Instance {
                 .map_err(|_| {
                     Error::ActionFailed("timeout while starting manager instance".to_string(), None)
                 })??;
-        let _ = entry.insert(manager.clone());
+        let _ = entry.insert((manager.clone(), statusmanager.get().clone()));
 
         spawn(background_task!(
             format!("status reporter for instance {}", self.full_name()),
             {
                 let eventmanager = EventManager::new(ctx.client.clone(), self.get_ref());
                 let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
+                let managers = ctx.state.managers.clone();
+                let full_name = full_name.clone();
                 async move {
                     while let Some(event) = status_receiver.recv().await {
                         eventmanager.publish((&event).into()).await;
@@ -262,6 +294,11 @@ impl Instance {
                             };
                         });
                         statusmanager.sync().await;
+                        if let Some(Some((_, ref mut status))) =
+                            managers.managers.write().await.get_mut(&full_name)
+                        {
+                            *status = statusmanager.get().clone();
+                        }
                     }
                     Ok(())
                 }
