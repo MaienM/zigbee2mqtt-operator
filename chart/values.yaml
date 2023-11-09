@@ -1,0 +1,16 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/MaienM/zigbee2mqtt-operator
+  pullPolicy: IfNotPresent
+  tag: latest
+
+pod:
+  annotations: {}
+  specExtra: {}
+  containerExtra: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""

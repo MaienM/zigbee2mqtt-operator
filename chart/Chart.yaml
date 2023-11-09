@@ -1,0 +1,6 @@
+apiVersion: v2
+name: zigbee2mqtt-operator
+description: Operator for Zigbee2MQTT resources.
+type: application
+version: 0.1.0
+appVersion: 0.1.0
