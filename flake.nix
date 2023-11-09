@@ -28,6 +28,7 @@
               "rustfmt"
             ])
             fenix.packages.${system}.rust-analyzer
+            pkgs.cargo-nextest
 
             pkgs.kubectl
           ];
