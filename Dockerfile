@@ -46,4 +46,4 @@ FROM scratch
 ARG TARGET
 COPY --from=builder /source/target/${TARGET}/release/zigbee2mqtt-operator /
 
-CMD ["/zigbee2mqtt-operator"]
+CMD ["/zigbee2mqtt-operator", "run"]

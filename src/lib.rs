@@ -13,8 +13,9 @@ use kube::{core::object::HasStatus, runtime::controller::Action, Client, Resourc
 use once_cell::sync::Lazy;
 use reconcilers::instance::InstanceTracker;
 
-pub mod crds;
-pub mod error;
+pub mod commands;
+mod crds;
+mod error;
 mod event_manager;
 mod mqtt;
 mod reconcilers;
@@ -23,6 +24,9 @@ mod sync_utils;
 mod with_source;
 
 static NAME: Lazy<String> = Lazy::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
+
+/// The name of the finalizer for this operator.
+static FINALIZER: &str = "zigbee2mqtt.maienm.com";
 
 /// The timeout for responses/messages from Zigbee2MQTT.
 static TIMEOUT: Lazy<Duration> = Lazy::new(|| {
