@@ -1,6 +1,5 @@
 use std::{any::type_name, mem, sync::Arc, time::Duration};
 
-use derive_more::{Deref, DerefMut};
 use futures::Stream;
 use rumqttc::Publish;
 use serde::Deserialize;
@@ -13,11 +12,8 @@ use tokio_stream::{
 use crate::error::{Error, ErrorWithMeta};
 
 /// A subscription to an MQTT topic.
-#[derive(Deref, DerefMut)]
 #[allow(clippy::module_name_repetitions)]
 pub struct TopicSubscription {
-    #[deref]
-    #[deref_mut]
     receiver: broadcast::Receiver<Publish>,
     topic: String,
 }
