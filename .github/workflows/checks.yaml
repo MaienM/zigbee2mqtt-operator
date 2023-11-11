@@ -1,0 +1,118 @@
+name: Checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  rustfmt:
+    name: Formatting (rustfmt)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          components: rustfmt
+
+      - name: Run rustfmt
+        uses: LoliGothick/rustfmt-check@v0.4.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          toolchain: nightly
+
+  clippy:
+    name: Linting (clippy)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: clippy
+
+      - name: Install clippy-sarif
+        uses: baptiste0928/cargo-install@v2
+        with:
+          crate: clippy-sarif 
+
+      - name: Install sarif-fmt
+        uses: baptiste0928/cargo-install@v2
+        with:
+          crate: sarif-fmt 
+
+      - name: Set up cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run:
+          cargo clippy --all-features --message-format=json
+          | clippy-sarif
+          | tee rust-clippy-results.sarif
+          | sarif-fmt
+        continue-on-error: true
+
+      - name: Upload results to GitHub
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: rust-clippy-results.sarif
+
+  nextest:
+    name: Tests (nextest)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+        with:
+          profile: minimal
+          toolchain: stable
+
+      - name: Install cargo-nextest
+        uses: baptiste0928/cargo-install@v2
+        with:
+          crate: cargo-nextest 
+
+      - name: Set up cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run:
+          cargo build
+
+      - name: Run nextest
+        run:
+          cargo nextest run --all-features --all-targets --profile=ci
+        continue-on-error: true
+
+      - name: Upload results to GitHub
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results
+          path: target/nextest/ci/junit.xml
+          reporter: java-junit

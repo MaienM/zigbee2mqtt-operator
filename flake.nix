@@ -30,6 +30,7 @@
             fenix.packages.${system}.rust-analyzer
             pkgs.cargo-nextest
 
+            pkgs.act
             pkgs.kubectl
           ];
         };
