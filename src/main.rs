@@ -57,7 +57,7 @@ where
         }
     })
     .await
-    .map_err(|err| Error::FinalizerError(Arc::new(Box::new(err))))
+    .map_err(|err| Error::Finalizer(Arc::new(err)))
 }
 
 fn error_policy<T>(resource: Arc<T>, error: &Error, _ctx: Arc<Context>) -> Action

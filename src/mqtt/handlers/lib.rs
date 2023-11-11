@@ -153,7 +153,7 @@ impl<V> RequestResponse<V> {
     pub fn convert(self) -> Result<V, Error> {
         match self {
             RequestResponse::Ok { data } => Ok(data),
-            RequestResponse::Error { error } => Err(Error::Zigbee2MQTTError(error)),
+            RequestResponse::Error { error } => Err(Error::Zigbee2Mqtt(error)),
         }
     }
 }
@@ -233,7 +233,7 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
                 serde_json::from_value(value).map_err(|err| {
                     Error::ActionFailed(
                         "processing configuration yielded non-object".to_owned(),
-                        Some(Arc::new(Box::new(err))),
+                        Some(Arc::new(err)),
                     )
                     .caused_by(&source)
                 })

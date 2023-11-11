@@ -340,7 +340,7 @@ impl CapabilitiesManager {
             ($body:block) => {
                 async {
                     match async { $body }.await {
-                        Ok(_) => Result::<(), _>::Ok(()),
+                        Ok(()) => Result::<(), _>::Ok(()),
                         Err(err) => Result::<(), _>::Err(Err(err)),
                     }
                 }
@@ -358,7 +358,7 @@ impl CapabilitiesManager {
             }),
             terminating!({
                 sleep(*TIMEOUT).await;
-                Err(Error::Zigbee2MQTTError(format!(
+                Err(Error::Zigbee2Mqtt(format!(
                     "timeout while attempting to {verb} current state of device {friendly_name}",
                     friendly_name = self.friendly_name,
                 )))
@@ -369,7 +369,7 @@ impl CapabilitiesManager {
             }),
             terminating!({
                 let log = log_recv.next_noclose().await?;
-                Err(Error::Zigbee2MQTTError(format!(
+                Err(Error::Zigbee2Mqtt(format!(
                     "error while attempting to {verb} current state of device {friendly_name}: {message:?}",
                     friendly_name = self.friendly_name,
                     message = log.message,
@@ -410,7 +410,7 @@ impl ConfigurationManagerInner for CapabilitiesManager {
             serde_json::to_string(configuration).map_err(|err| {
                 Error::ActionFailed(
                     "failed to convert capabilities to JSON".to_owned(),
-                    Some(Arc::new(Box::new(err))),
+                    Some(Arc::new(err)),
                 )
                 .caused_by(configuration)
             })?,

@@ -95,7 +95,7 @@ macro_rules! background_task {
             let name = stringify!($name);
             let result: Result<(), Error> = run.await;
             let error = match result {
-                Ok(_) => crate::error::Error::InvariantFailed(format!("{name} closed"), None),
+                Ok(()) => crate::error::Error::InvariantFailed(format!("{name} closed"), None),
                 Err(err) => crate::error::Error::InvariantFailed(
                     format!("{name} encountered an error"),
                     Some(Box::new(err)),

@@ -233,7 +233,7 @@ impl Options {
 
 async fn client_disconnect_or_warn(client: &MqttClient, id: &String) {
     match client.disconnect().await {
-        Ok(_)
+        Ok(())
         | Err(
             ClientError::Request(Request::Disconnect(_))
             | ClientError::TryRequest(Request::Disconnect(_)),
@@ -382,7 +382,7 @@ impl Manager {
                 tasks.spawn(background_task!($name, { $run }, {
                     let this = inst.clone();
                     |err| async move {
-                        let _ = this.start_shutdown(Some(Box::new(err))).await;
+                        let () = this.start_shutdown(Some(Box::new(err))).await;
                     }
                 }));
             };
@@ -431,7 +431,7 @@ impl Manager {
                     Ok(Event::Outgoing(Outgoing::Disconnect)) | Err(_) => break,
                     _ => {}
                 },
-                _ = sleep(*TIMEOUT) => {
+                () = sleep(*TIMEOUT) => {
                     warn_span!("timeout while closing manager", id=self.id);
                     break;
                 }
@@ -469,8 +469,8 @@ impl Manager {
                     match event {
                         Event::Incoming(Packet::ConnAck(ref ack)) => {
                             if !ack.session_present {
-                                let _ = self
-                                    .start_shutdown(Some(Box::new(Error::MQTTError(
+                                let () = self
+                                    .start_shutdown(Some(Box::new(Error::Mqtt(
                                         "reconnect failed to continue existing session".to_string(),
                                         None,
                                     ))))
@@ -528,7 +528,7 @@ impl Manager {
         let mut healthcheck = HealthChecker::new(self.clone()).await?;
         loop {
             let (status, interval) = match healthcheck.get().await {
-                Ok(_) => (Z2MStatus::HealthOk, *RECONCILE_INTERVAL),
+                Ok(()) => (Z2MStatus::HealthOk, *RECONCILE_INTERVAL),
                 Err(err) => (
                     Z2MStatus::HealthError(err.to_string()),
                     *RECONCILE_INTERVAL_FAILURE,
@@ -596,7 +596,7 @@ impl Manager {
     async fn start_shutdown(self: &Arc<Self>, error: Option<Box<Error>>) {
         // Set the error. This will cause the main task to start the shutdown procedure once the current listener task finishes. Any further attempts to use the manager will return this error, which will signal to the reconciler that a new instance must be created.
         match self.shutdown_reason.set(error) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(_) => return,
         };
 
@@ -661,10 +661,10 @@ impl Manager {
                     let notify = this.subscription_lock.lock().await;
                     debug_span!("unsubscribing", id = this.id, topic);
                     if let Err(err) = client.unsubscribe(topic.clone()).await {
-                        let _ = this
-                            .start_shutdown(Some(Box::new(Error::MQTTError(
+                        let () = this
+                            .start_shutdown(Some(Box::new(Error::Mqtt(
                                 format!("unsubscribe from {topic} failed"),
-                                Some(Arc::new(Box::new(err))),
+                                Some(Arc::new(err)),
                             ))))
                             .await;
                     }
@@ -685,10 +685,7 @@ impl Manager {
             .subscribe(&topic, QoS::AtLeastOnce)
             .await
             .map_err(|err| {
-                Error::MQTTError(
-                    format!("subscribe to {topic} failed"),
-                    Some(Arc::new(Box::new(err))),
-                )
+                Error::Mqtt(format!("subscribe to {topic} failed"), Some(Arc::new(err)))
             })?;
         notify.notified().await;
 
@@ -707,12 +704,7 @@ impl Manager {
             .await
             .publish(&topic, QoS::AtLeastOnce, false, message)
             .await
-            .map_err(|err| {
-                Error::MQTTError(
-                    format!("publish to {topic} failed"),
-                    Some(Arc::new(Box::new(err))),
-                )
-            })
+            .map_err(|err| Error::Mqtt(format!("publish to {topic} failed"), Some(Arc::new(err))))
     }
 
     pub async fn get_bridge_info_tracker(

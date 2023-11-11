@@ -89,7 +89,7 @@ impl InstanceTracker {
             let instances = self.api.list_metadata(&lp).await.map_err(|err| {
                 Error::ActionFailed(
                     "failed to get list of instances".to_owned(),
-                    Some(Arc::new(Box::new(err))),
+                    Some(Arc::new(err)),
                 )
             })?;
             instances
@@ -307,7 +307,6 @@ impl Instance {
                 let mut statusmanager = StatusManager::new(ctx.client.clone(), self);
                 let manager = manager.clone();
                 let managers = ctx.state.managers.clone();
-                let full_name = full_name;
                 |err| async move {
                     error_span!("status reporter for instance stopped", ?err);
                     managers.managers.write().await.remove(&full_name);
@@ -354,7 +353,7 @@ impl Instance {
                 .map_err(|err| {
                     Error::ActionFailed(
                         format!("failed to get list of {}", T::Resource::plural(&dt)),
-                        Some(Arc::new(Box::new(err))),
+                        Some(Arc::new(err)),
                     )
                 })?
                 .iter()

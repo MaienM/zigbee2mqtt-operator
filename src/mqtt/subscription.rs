@@ -79,7 +79,7 @@ where
         TopicStream {
             stream: self.stream.map(move |value| match value {
                 Ok(p) => Ok(p),
-                Err(BroadcastStreamRecvError::Lagged(_)) => Err(Error::SubscriptionError {
+                Err(BroadcastStreamRecvError::Lagged(_)) => Err(Error::Subscription {
                     topic: topic.clone(),
                     message: "subscription lagged, some messages have been lost".to_string(),
                     source: None,
@@ -100,13 +100,13 @@ where
     {
         let topic = self.topic.clone();
         self.map_ok(move |value| {
-            serde_json::from_slice::<T>(&value.payload).map_err(|err| Error::SubscriptionError {
+            serde_json::from_slice::<T>(&value.payload).map_err(|err| Error::Subscription {
                 topic: topic.clone(),
                 message: format!(
                     "failed to parse message to {type_}",
                     type_ = type_name::<T>(),
                 ),
-                source: Some(Arc::new(Box::new(err))),
+                source: Some(Arc::new(err)),
             })
         })
     }
@@ -199,7 +199,7 @@ where
     pub async fn next_noclose(&mut self) -> St::Item {
         match self.next().await {
             Some(result) => result,
-            None => Err(Error::SubscriptionError {
+            None => Err(Error::Subscription {
                 topic: self.topic.clone(),
                 message: "subscription closed".to_string(),
                 source: None,
@@ -212,7 +212,7 @@ where
     pub async fn next_noclose_timeout(&mut self, duration: Duration) -> St::Item {
         match timeout(duration, self.next_noclose()).await {
             Ok(value) => value,
-            Err(_) => Err(Error::SubscriptionError {
+            Err(_) => Err(Error::Subscription {
                 topic: self.topic.clone(),
                 message: "timeout while waiting for message".to_string(),
                 source: None,

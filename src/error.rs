@@ -28,7 +28,7 @@ macro_rules! maybe {
 pub enum Error {
     /// Wrapped errors for a failed reconcile action.
     #[error("Finalizer error: {0}")]
-    FinalizerError(#[source] Arc<Box<FinalizerError<Error>>>),
+    Finalizer(#[source] Arc<FinalizerError<Error>>),
 
     /// A misconfiguration of a Kubernetes resource. This is only for problems that require a change to a resource to resolve, not for temporary failures that might resolve by themselves.
     #[error("Invalid resource: {0}")]
@@ -36,25 +36,25 @@ pub enum Error {
 
     /// The MQTT broker responded in an unexpected manner.
     #[error("MQTT error: {0}{err}", err = maybe!(.1))]
-    MQTTError(
+    Mqtt(
         String,
-        #[source] Option<Arc<Box<dyn std::error::Error + Send + Sync>>>,
+        #[source] Option<Arc<dyn std::error::Error + Send + Sync>>,
     ),
 
     /// The Zigbee2MQTT application responded in an unexpected manner.
     #[error("Zigbee2MQTT error: {0}")]
-    Zigbee2MQTTError(String),
+    Zigbee2Mqtt(String),
 
     /// Something in the process of reading and processing messages for a subscription failed.
     #[error("Subscription error on topic {topic}: {message}{err}", err = maybe!(.source))]
-    SubscriptionError {
+    Subscription {
         /// The topic of the subscription that generated this error.
         topic: String,
         /// A human-readable message describing the issue.
         message: String,
         /// The underlying error that caused this issue, if any.
         #[source]
-        source: Option<Arc<Box<dyn std::error::Error + Send + Sync>>>,
+        source: Option<Arc<dyn std::error::Error + Send + Sync>>,
     },
 
     /// A manager has been shut down and should no longer be used.
@@ -69,7 +69,7 @@ pub enum Error {
     #[error("Action failed: {0}")]
     ActionFailed(
         String,
-        #[source] Option<Arc<Box<dyn std::error::Error + Send + Sync>>>,
+        #[source] Option<Arc<dyn std::error::Error + Send + Sync>>,
     ),
 }
 

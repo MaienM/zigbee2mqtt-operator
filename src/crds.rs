@@ -314,11 +314,8 @@ impl ValueWithSource<ValueFrom> {
                     .get(&skr.name)
                     .await
                     .map_err(|err| {
-                        Error::ActionFailed(
-                            "failed to get secret".to_string(),
-                            Some(Arc::new(Box::new(err))),
-                        )
-                        .caused_by(&self.sub((), ".secretKeyRef"))
+                        Error::ActionFailed("failed to get secret".to_string(), Some(Arc::new(err)))
+                            .caused_by(&self.sub((), ".secretKeyRef"))
                     })?;
                 let value = secret
                     .data
@@ -332,7 +329,7 @@ impl ValueWithSource<ValueFrom> {
                     .map_err(|err| {
                         Error::ActionFailed(
                             "failed to parse secret data for this key".to_string(),
-                            Some(Arc::new(Box::new(err))),
+                            Some(Arc::new(err)),
                         )
                         .caused_by(&self.sub((), ".secretKeyRef.key"))
                     })?;
