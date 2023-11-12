@@ -1,6 +1,10 @@
 //! Utility to manage Kubernetes [`Event`]s.
 
-use fasthash::metro;
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
 use k8s_openapi::{
     api::{
         core::v1::ObjectReference,
@@ -11,7 +15,6 @@ use k8s_openapi::{
 };
 use kube::{api::PostParams, core::ObjectMeta, Api, Client};
 use serde::Serialize;
-use serde_json::json;
 use strum_macros::Display;
 use tracing::{error_span, info_span};
 
@@ -23,22 +26,22 @@ pub trait EventExt {
 impl EventExt for Event {
     fn create(mut regarding: ObjectReference, core: EventCore) -> Self {
         regarding.field_path = core.field_path;
-        let core_id = json!([
-            regarding.api_version,
-            regarding.kind,
-            regarding.namespace,
-            regarding.name,
-            regarding.field_path,
-            core.action,
-            core.note,
-            core.reason,
-            core.type_
-        ]);
-        let core_id = metro::hash64(serde_json::to_vec(&core_id).unwrap());
+
+        let mut hasher = DefaultHasher::new();
+        regarding.api_version.hash(&mut hasher);
+        regarding.namespace.hash(&mut hasher);
+        regarding.name.hash(&mut hasher);
+        regarding.field_path.hash(&mut hasher);
+        core.action.hash(&mut hasher);
+        core.note.hash(&mut hasher);
+        core.reason.hash(&mut hasher);
+        core.type_.hash(&mut hasher);
+        let hash = hasher.finish();
+
         let name = format!(
-            "zigbee2mqtt-{}-{}",
+            "zigbee2mqtt-{}-{:x}",
             regarding.kind.clone().unwrap().to_lowercase(),
-            core_id,
+            hash,
         );
         Event {
             metadata: ObjectMeta {
