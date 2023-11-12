@@ -1,0 +1,61 @@
+name: Helm Chart
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Login to GHCR
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+
+      - name: Extract metadata for image
+        id: image-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: type=sha
+
+      - name: Extract metadata for chart
+        id: chart-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-chart
+          tags: type=semver,pattern={{version}}
+          flavor: latest=false
+
+      - name: Wait for image workflow to succeed
+        uses: emilgoldsmith/wait-for-workflows-to-succeed@v1.7
+        with:
+          wait-interval-seconds: 5
+          wait-max-seconds: 1800
+          repo-token: ${{ github.token }}
+          workflows: 'image.yaml'
+
+      - name: Generate CRDs
+        run: |
+          docker run --rm ${{ steps.image-metadata.output.tags }} crdgen > chart/crds.yaml
+
+      - name: Push Helm chart
+        uses: gacts/run-and-post-run@v1
+        with:
+          run: |
+            echo ${{ github.token }} | helm registry login -u ${{ github.repository_owner }} --password-stdin ghcr.io
+            version="${{ steps.chart-metadata.outputs.version }}"
+            helm package chart --version "$version" --app-version "$version"
+            helm push "zigbee2mqtt-operator-$version.tgz" "oci://${{ steps.chart-metadata.outputs.tags}}"
+          post: |
+            helm registry logout ghcr.io
