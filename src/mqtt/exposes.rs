@@ -1047,7 +1047,7 @@ mod tests {
             assert_err!(
                 EXPOSE,
                 json!({
-                    "nested": {
+                    "nesed": {
                         "binary": "maybe",
                     },
                 }),
