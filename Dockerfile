@@ -4,13 +4,22 @@ ARG RUST_VERSION=1.72.0
 # Builder.
 #
 
-FROM rust:${RUST_VERSION} as builder
+FROM --platform=${BUILDPLATFORM} rust:${RUST_VERSION} as builder
 WORKDIR /source
 
 # Setup rust toolchain for target environment.
-RUN TARGET="$(uname -m)-unknown-linux-musl" \
- && rustup target add ${TARGET} \
- && rustup set default-host ${TARGET}
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+	amd64) ARCH="x86_64" ;; \
+	arm64) ARCH="aarch64" ;; \
+	*) \
+		>&2 echo "Unsupported architecture ${TARGETARCH}." \
+		exit 1 \
+	;; \
+ esac \
+ && TARGET="${ARCH}-unknown-linux-musl" \
+ && echo "${TARGET}" > .target \
+ && rustup target add ${TARGET}
 
 # Setup LLVM environment. (At least) ring needs this to build.
 ARG LLVM_VERSION=16
@@ -25,18 +34,19 @@ RUN . /etc/os-release \
  && rm -rf /var/lib/apt/lists/*
 ENV CC=clang-${LLVM_VERSION}
 ENV AR=llvm-ar-${LLVM_VERSION}
-ENV CARGO_RUSTFLAGS="-Clink-self-contained=yes -Clinker=rust-lld"
 
 # Fetch dependencies.
 COPY Cargo.* .
 RUN mkdir -p src \
  && touch src/lib.rs \
- && cargo fetch --locked \
+ && cargo fetch --locked --target="$(cat .target)" \
  && rm -r src
 
 # Build binary.
 COPY src/ ./src
-RUN cargo build --frozen --release
+ENV RUSTFLAGS="-Clink-self-contained=yes -Clinker=rust-lld"
+RUN cargo build --frozen --release --target="$(cat .target)"
+RUN mv "target/$(cat .target)/release/zigbee2mqtt-operator" target/
 
 #
 # Runtime.
@@ -44,6 +54,7 @@ RUN cargo build --frozen --release
 
 FROM scratch
 
-COPY --from=builder /source/target/release/zigbee2mqtt-operator /
+COPY --from=builder /source/target/zigbee2mqtt-operator /
 
-CMD ["/zigbee2mqtt-operator", "run"]
+ENTRYPOINT ["/zigbee2mqtt-operator"]
+CMD ["run"]
