@@ -59,14 +59,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
       checks: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+        uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
@@ -85,13 +84,17 @@ jobs:
 
       - name: Run nextest
         run:
-          cargo nextest run --all-features --all-targets --profile=ci
-        continue-on-error: true
+          cargo nextest run --all-features --all-targets --profile=ci --no-fail-fast
 
-      - name: Upload results to GitHub
-        uses: dorny/test-reporter@v1
+      - name: Parse error locations
+        uses: mikefarah/yq@master
         if: always()
         with:
-          name: Test Results
-          path: target/nextest/ci/junit.xml
-          reporter: java-junit
+          cmd: yq -i 'with(.testsuites.testsuite.testcase; .[] |= with(select(.failure != null) | .failure; (."+content" | capture("(?s)panicked at (?P<file>[^:]+):(?P<line>\d+):\d+:\n(?P<message>.*)")) as $match | ."+@file" = $match.file | ."+@line" = $match.line | ."+@message" = $match.message))' target/nextest/ci/junit.xml
+
+      - name: Upload results to GitHub
+        uses: mikepenz/action-junit-report@v4.0.3
+        if: always()
+        with:
+          report_paths: target/nextest/ci/junit.xml
+          annotate_only: true
