@@ -8,9 +8,6 @@ on:
     branches:
       - main
 
-env:
-  RUST_VERSION: 1.72.0
-
 jobs:
   rustfmt:
     name: Formatting (rustfmt)
@@ -21,6 +18,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Load .env
+        uses: falti/dotenv-action@v1.0.4
+        with:
+          export-variables: true
+          log-variables: true
+          keys-case: upper
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -41,6 +45,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Load .env
+        uses: falti/dotenv-action@v1.0.4
+        with:
+          export-variables: true
+          log-variables: true
+          keys-case: upper
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -65,6 +76,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Load .env
+        uses: falti/dotenv-action@v1.0.4
+        with:
+          export-variables: true
+          log-variables: true
+          keys-case: upper
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1

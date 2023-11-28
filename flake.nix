@@ -33,6 +33,16 @@
             pkgs.act
             pkgs.kubectl
           ];
+
+          shellHook = ''
+            source .env
+            (
+              real_version="$(rustc --version | cut -d' ' -f2)"
+              if [ "$RUST_VERSION" != "$real_version" ]; then
+                >&2 echo "WARNING: Rust version $RUST_VERSION is specified in .env, but the installed version is $real_version."
+              fi
+            )
+          '';
         };
       });
 }
