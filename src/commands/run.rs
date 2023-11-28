@@ -88,7 +88,8 @@ where
         + Reconciler
         + Send
         + Serialize
-        + Sync,
+        + Sync
+        + 'static,
     T: Resource<Scope = NamespaceResourceScope>,
     <T as HasStatus>::Status: Default + Clone + Serialize + PartialEq + Send,
     <T as Resource>::DynamicType: Default + Eq + Hash + Clone + Debug + Unpin,
