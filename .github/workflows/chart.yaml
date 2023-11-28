@@ -22,18 +22,11 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ github.token }}
 
-      - name: Extract metadata for image
-        id: image-metadata
+      - name: Extract metadata
+        id: metadata
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-          tags: type=sha
-
-      - name: Extract metadata for chart
-        id: chart-metadata
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}-chart
           tags: type=semver,pattern={{version}}
           flavor: latest=false
 
@@ -47,15 +40,14 @@ jobs:
 
       - name: Generate CRDs
         run: |
-          docker run --rm ${{ steps.image-metadata.output.tags }} crdgen > chart/crds.yaml
+          docker run --rm ${{ steps.metadata.outputs.tags }} crdgen > chart/crds.yaml
 
       - name: Push Helm chart
         uses: gacts/run-and-post-run@v1
         with:
           run: |
             echo ${{ github.token }} | helm registry login -u ${{ github.repository_owner }} --password-stdin ghcr.io
-            version="${{ steps.chart-metadata.outputs.version }}"
-            helm package chart --version "$version" --app-version "$version"
-            helm push "zigbee2mqtt-operator-$version.tgz" "oci://${{ steps.chart-metadata.outputs.tags}}"
+            helm package chart --version "${{ steps.metadata.outputs.version }}-chart" --app-version "${{ steps.metadata.outputs.version }}"
+            helm push "zigbee2mqtt-operator-${{ steps.metadata.outputs.version }}-chart.tgz" "oci://${DOCKER_METADATA_OUTPUT_TAGS%/*}"
           post: |
             helm registry logout ghcr.io
