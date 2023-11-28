@@ -10,6 +10,9 @@ on:
     branches:
       - main
 
+env:
+  RUST_VERSION: 1.72.0
+
 jobs:
   image:
     runs-on: ubuntu-latest
@@ -48,6 +51,8 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            RUST_VERSION=${{ env.RUST_VERSION }}
 
       # The checks are faster than the image builds so it's unlikely this is ever actually a _wait_, but we want to avoid pushing the image if the checks fail.
       - name: Wait for checks workflow to succeed
@@ -66,3 +71,5 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            RUST_VERSION=${{ env.RUST_VERSION }}
