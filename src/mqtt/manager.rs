@@ -279,6 +279,7 @@ pub struct Manager {
     bridge_groups_tracker: OnceCellMaybe<BridgeGroupsTracker>,
 }
 impl Manager {
+    #[allow(clippy::too_many_lines)]
     pub async fn new(
         options: Options,
     ) -> Result<(Arc<Self>, mpsc::UnboundedReceiver<Status>), Error> {
@@ -303,7 +304,13 @@ impl Manager {
                     let event = $eventloop.poll().await;
                     match event {
                         $expected => break,
-                        Err(_) => continue,
+                        Err(ref err) => match err.into() {
+                            ConnectionStatus::Refused(_) => {},
+                            err => {
+                                info_span!("unexpected event during initial handshake, ignoring", id, ?err);
+                                continue;
+                            }
+                        },
                         _ => {},
                     };
                     return Err(Error::ActionFailed(
@@ -432,7 +439,7 @@ impl Manager {
                     _ => {}
                 },
                 () = sleep(*TIMEOUT) => {
-                    warn_span!("timeout while closing manager", id=self.id);
+                    warn_span!("timeout while closing manager", id = self.id);
                     break;
                 }
             };
