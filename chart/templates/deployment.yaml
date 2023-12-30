@@ -11,8 +11,10 @@ spec:
       {{- include "chart.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- with .Values.pod.annotations }}
       annotations:
-        {{- toYaml .Values.pod.annotations | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "chart.selectorLabels" . | nindent 8 }}
     spec:
@@ -21,5 +23,9 @@ spec:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- toYaml .Values.pod.containerExtra | nindent 10 }}
-      {{- toYaml .Values.pod.specExtra | nindent 6 }}
+          {{- with .Values.pod.containerExtra }}
+            {{- toYaml . | nindent 10 }}
+          {{- end }}
+      {{- with .Values.pod.specExtra }}
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
