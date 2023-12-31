@@ -13,7 +13,7 @@ use super::super::{
 use crate::{
     error::{Error, ErrorWithMeta},
     event_manager::{EventManager, EventType},
-    mqtt::exposes::Processor,
+    mqtt::exposes::{Processor, EXPLICIT_NULL},
     with_source::ValueWithSource,
     EventCore, TIMEOUT,
 };
@@ -216,6 +216,16 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
         // Get the current configuration.
         let current = self.get().await?;
 
+        // Convert explicit [`Value::Null`] values in the configuration to [`EXPLICIT_NULL`].
+        configuration = configuration.transform(|mut configuration| {
+            for value in configuration.values_mut() {
+                if *value == Value::Null {
+                    *value = EXPLICIT_NULL.clone();
+                }
+            }
+            configuration.take()
+        });
+
         // Insert null for properties in the current configuration that should be cleared.
         for key in current.keys() {
             if Self::clear_property(key) {
@@ -270,6 +280,16 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
         // Apply the configuration.
         let result = self.set(&configuration).await?;
 
+        // Convert [`EXPLICIT_NULL`] values back to [`Value::Null`].
+        let configuration = configuration.transform(|mut configuration| {
+            for value in configuration.values_mut() {
+                if *value == *EXPLICIT_NULL {
+                    *value = Value::Null;
+                }
+            }
+            configuration.take()
+        });
+
         // Verify that the result matches the desired configuration. If this is not the case, log the mismatches and return an error.
         let differences = find_differences(&configuration, &result);
         for difference in &differences {
@@ -309,29 +329,28 @@ struct Difference {
     wanted: String,
     actual: String,
 }
+fn json_to_string(value: &Value) -> String {
+    if *value == *EXPLICIT_NULL {
+        "null".to_owned()
+    } else {
+        serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+    }
+}
 fn find_differences(wanted: &Configuration, actual: &Configuration) -> Vec<Difference> {
     let mut differences = Vec::new();
     for key in wanted.keys() {
         let (wanted, actual) = match (wanted.get(key), actual.get(key)) {
-            (None | Some(Value::Null), None | Some(Value::Null)) => {
-                continue;
+            (None | Some(Value::Null), None) => continue,
+            (Some(value), Some(Value::Null)) if *value == *EXPLICIT_NULL => continue,
+            (None | Some(Value::Null), Some(actual)) => {
+                ("default value".to_string(), json_to_string(actual))
             }
-            (None | Some(Value::Null), Some(actual)) => (
-                "default value".to_string(),
-                serde_json::to_string(actual).unwrap_or_else(|_| actual.to_string()),
-            ),
-            (Some(wanted), None | Some(Value::Null)) => (
-                serde_json::to_string(wanted).unwrap_or_else(|_| wanted.to_string()),
-                "default value".to_string(),
-            ),
+            (Some(wanted), None) => (json_to_string(wanted), "default value".to_string()),
             (Some(wanted), Some(actual)) => {
                 if wanted == actual {
                     continue;
                 }
-                (
-                    serde_json::to_string(wanted).unwrap_or_else(|_| wanted.to_string()),
-                    serde_json::to_string(actual).unwrap_or_else(|_| actual.to_string()),
-                )
+                (json_to_string(wanted), json_to_string(actual))
             }
         };
         differences.push(Difference {
