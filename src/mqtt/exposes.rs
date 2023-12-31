@@ -9,7 +9,7 @@ use derive_builder::Builder;
 use enum_dispatch::enum_dispatch;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use structout::generate;
 
 use crate::{
@@ -624,6 +624,9 @@ create_toplevel!(
     GroupOptionsSchema,
     &mut GROUP_OPTIONS.clone(),
 );
+
+/// Special value that corresponds to setting a value to null, rather than resetting it to its default (which is what [`Value::Null`] does).
+pub(crate) static EXPLICIT_NULL: Lazy<Value> = Lazy::new(|| json!({ "null_placeholder": true }));
 
 #[cfg(test)]
 mod tests {
