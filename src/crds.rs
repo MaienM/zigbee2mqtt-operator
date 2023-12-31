@@ -19,6 +19,20 @@ use crate::{
     ResourceLocalExt,
 };
 
+/// An object that allows arbitrary nested fields.
+///
+/// This triggers the the rewrite rule introduced in <https://github.com/kube-rs/kube/pull/845>, causing the generated schema to use `x-kubernetes-preserve-unknown-fields` instead of `additionalProperties`. `additionalProperties` doesn't allow properies in nested objects, but `x-kubernetes-preserve-unknown-fields` does.
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct NestedMap {
+    /// The actual values.
+    #[serde(flatten)]
+    pub values: Map<String, Value>,
+
+    /// This field exists only to trigger the rewrite rule.
+    #[serde(rename = "___", default)]
+    dummy: Option<bool>,
+}
+
 ///
 /// A Zigbee2MQTT instance.
 ///
@@ -159,13 +173,13 @@ pub struct DeviceSpec {
     ///
     /// Note that unset/null and `{}` are different; the former will not manage options for this device at all while the latter will set all options to their default values.
     #[garde(skip)]
-    pub options: Option<Map<String, Value>>,
+    pub options: Option<NestedMap>,
 
     /// Capabilities to set.
     ///
     /// The available capabilities can be found in the 'Exposes' tab in the settings, with more details in the [supported devices listings](https://www.zigbee2mqtt.io/supported-devices/).
     #[garde(skip)]
-    pub capabilities: Option<Map<String, Value>>,
+    pub capabilities: Option<NestedMap>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
 #[allow(missing_docs)]
@@ -226,7 +240,7 @@ pub struct GroupSpec {
     ///
     /// Note that unset/null and `{}` are different; the former will not manage options for this group at all while the latter will set all options to their default values.
     #[garde(skip)]
-    pub options: Option<Map<String, Value>>,
+    pub options: Option<NestedMap>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Eq, PartialEq, Default)]
 #[allow(missing_docs)]

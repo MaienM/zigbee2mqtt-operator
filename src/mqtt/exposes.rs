@@ -190,7 +190,7 @@ enum Schema {
     Specific(Specific),
     /// An object with undefined contents.
     ///
-    /// This exists purely for the `homeassistant` option, as we don't have a definition for this, so we have no options option than to just accept any arbitrary object.
+    /// This exists purely for the `homeassistant` option, as we don't have a definition for this, so we have no other option than to just accept any arbitrary object.
     #[serde(skip)]
     Bag(WithProperty<Bag>),
 }

@@ -98,6 +98,8 @@ macro_rules! vws_sub {
 }
 pub(crate) use vws_sub;
 
+use crate::crds::NestedMap;
+
 impl<T> ValueWithSource<T> {
     /// Create a VWS that has a source which is derived from the source of this VWS.
     pub fn sub<V>(&self, value: V, source_suffix: &str) -> ValueWithSource<V> {
@@ -190,6 +192,16 @@ impl<T> ValueWithSource<T> {
         ValueWithSource {
             source: self.source.clone(),
             value: f(self),
+        }
+    }
+}
+
+impl ValueWithSource<NestedMap> {
+    /// Get the values of the [`NestedMap`].
+    pub fn values(self) -> ValueWithSource<Map<String, Value>> {
+        ValueWithSource {
+            source: self.source.clone(),
+            value: self.value.values,
         }
     }
 }

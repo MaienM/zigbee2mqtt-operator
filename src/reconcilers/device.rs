@@ -104,7 +104,7 @@ impl Device {
             .get_device_options_manager(vws!(self.spec.ieee_address))
             .await?;
         options_manager
-            .sync(eventmanager, wanted_options.clone())
+            .sync(eventmanager, wanted_options.clone().values())
             .await
     }
 
@@ -122,7 +122,7 @@ impl Device {
             .get_device_capabilities_manager(vws!(self.spec.ieee_address), friendly_name)
             .await?;
         capabilities_manager
-            .sync(eventmanager, wanted_capabilities.clone())
+            .sync(eventmanager, wanted_capabilities.clone().values())
             .await
     }
 }

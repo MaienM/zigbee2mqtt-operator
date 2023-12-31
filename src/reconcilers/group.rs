@@ -253,7 +253,7 @@ impl Group {
 
         let mut options_manager = manager.get_group_options_manager(group.id.clone()).await?;
         options_manager
-            .sync(eventmanager, wanted_options.clone())
+            .sync(eventmanager, wanted_options.clone().values())
             .await
     }
 }
