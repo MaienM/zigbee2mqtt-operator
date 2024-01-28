@@ -235,7 +235,7 @@ impl ConfigurationManagerInner for OptionsManager {
         Ok(value.to)
     }
 
-    fn clear_property(key: &str) -> bool {
+    fn is_property_clearable(key: &str) -> bool {
         !matches!(key, "friendly_name")
     }
 }
@@ -419,7 +419,7 @@ impl ConfigurationManagerInner for CapabilitiesManager {
         .map_err(|err| err.caused_by(configuration))
     }
 
-    fn clear_property(_key: &str) -> bool {
+    fn is_property_clearable(_key: &str) -> bool {
         false
     }
 }

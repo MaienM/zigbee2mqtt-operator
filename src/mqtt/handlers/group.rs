@@ -381,7 +381,7 @@ impl ConfigurationManagerInner for OptionsManager {
         Ok(value.to)
     }
 
-    fn clear_property(key: &str) -> bool {
+    fn is_property_clearable(key: &str) -> bool {
         !matches!(key, "friendly_name" | "devices")
     }
 }

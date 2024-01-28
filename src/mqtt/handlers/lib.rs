@@ -203,7 +203,37 @@ pub(super) trait ConfigurationManagerInner {
     ) -> Result<Configuration, ErrorWithMeta>;
 
     /// Whether to set a property which is currently set but missing from the new configuration to null.
-    fn clear_property(key: &str) -> bool;
+    fn is_property_clearable(key: &str) -> bool;
+}
+struct ConfigurationManagerHelpers;
+impl ConfigurationManagerHelpers {
+    fn insert_null_for_clearable(
+        is_property_clearable: fn(&str) -> bool,
+        configuration: &mut Configuration,
+        current: &Configuration,
+        parent_key: &str,
+    ) {
+        for (key, current_inner) in current {
+            match configuration.get_mut(key).map(Value::as_object_mut) {
+                None => {
+                    if is_property_clearable(&format!("{parent_key}.{key}")[1..]) {
+                        configuration.insert(key.clone(), Value::Null);
+                    }
+                }
+                Some(None) => {}
+                Some(Some(ref mut configuration_inner)) => {
+                    if let Some(current_inner) = current_inner.as_object() {
+                        ConfigurationManagerHelpers::insert_null_for_clearable(
+                            is_property_clearable,
+                            configuration_inner,
+                            current_inner,
+                            &format!("{parent_key}.{key}"),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 #[async_trait]
 pub(super) trait ConfigurationManager: ConfigurationManagerInner {
@@ -217,11 +247,15 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
         let current = self.get().await?;
 
         // Insert null for properties in the current configuration that should be cleared.
-        for key in current.keys() {
-            if Self::clear_property(key) {
-                configuration.entry(key.clone()).or_insert(Value::Null);
-            }
-        }
+        configuration = configuration.transform(|mut configuration| {
+            ConfigurationManagerHelpers::insert_null_for_clearable(
+                Self::is_property_clearable,
+                &mut configuration,
+                &current,
+                "",
+            );
+            configuration.take()
+        });
 
         // Use schema to validate/process configuration.
         let schema = self.schema().await?;
