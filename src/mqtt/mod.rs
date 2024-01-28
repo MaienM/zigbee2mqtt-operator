@@ -5,5 +5,5 @@ mod handlers;
 mod manager;
 mod subscription;
 
-pub use handlers::{BridgeDeviceType, BridgeDevicesPayload, BridgeGroup, BridgeInfoPayload};
+pub use handlers::BridgeGroup;
 pub use manager::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus};
