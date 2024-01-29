@@ -42,8 +42,12 @@ pub struct NestedMap {
     version = "v1",
     kind = "Instance",
     plural = "instances",
+    shortname = "zmi",
+    category = "zigbee2mqtt",
     namespaced,
-    status = "InstanceStatus"
+    status = "InstanceStatus",
+    printcolumn = r#"{"name":"Broker","jsonPath":".status.broker","type":"boolean"}"#,
+    printcolumn = r#"{"name":"Zigbee2MQTT","jsonPath":".status.zigbee2mqtt","type":"boolean"}"#
 )]
 pub struct InstanceSpec {
     /// The host of the MQTT broker.
@@ -145,8 +149,12 @@ pub trait Instanced {
     version = "v1",
     kind = "Device",
     plural = "devices",
+    shortname = "zmd",
+    category = "zigbee2mqtt",
     namespaced,
-    status = "DeviceStatus"
+    status = "DeviceStatus",
+    printcolumn = r#"{"name":"Exists","jsonPath":".status.exists","type":"boolean"}"#,
+    printcolumn = r#"{"name":"Synced","jsonPath":".status.synced","type":"boolean"}"#
 )]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceSpec {
@@ -210,8 +218,12 @@ impl Instanced for Device {
     version = "v1",
     kind = "Group",
     plural = "groups",
+    shortname = "zmg",
+    category = "zigbee2mqtt",
     namespaced,
-    status = "GroupStatus"
+    status = "GroupStatus",
+    printcolumn = r#"{"name":"Exists","jsonPath":".status.exists","type":"boolean"}"#,
+    printcolumn = r#"{"name":"Synced","jsonPath":".status.synced","type":"boolean"}"#
 )]
 #[serde(rename_all = "camelCase")]
 pub struct GroupSpec {
