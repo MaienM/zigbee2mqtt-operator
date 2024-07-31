@@ -225,7 +225,7 @@ impl Options {
 
         options.set_clean_session(false);
         options.set_keep_alive(Duration::from_secs(15));
-        options.set_max_packet_size(50_000, 50_000);
+        options.set_max_packet_size(50_000_000, 50_000_000);
 
         options
     }
