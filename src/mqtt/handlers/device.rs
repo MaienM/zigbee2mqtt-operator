@@ -72,30 +72,8 @@ pub struct BridgeDevice {
     pub ieee_address: String,
     pub friendly_name: String,
     pub interview_completed: bool,
-    #[serde(rename = "type")]
-    pub type_: BridgeDeviceType,
     pub supported: bool,
     pub definition: Option<BridgeDeviceDefinition>,
-}
-/// Type of a bridge device.
-///
-/// From <https://www.zigbee2mqtt.io/advanced/zigbee/01_zigbee_network.html>.
-#[derive(Deserialize, Debug, Clone, PartialEq)]
-pub enum BridgeDeviceType {
-    /// End devices do not route traffic. They may also sleep, which makes end devices a suitable choice for battery operated devices. An end device only has one parent, either the coordinator or a router, generally the closest device when it was paired. All communications to and from the end device is via their parent. If a parent router goes offline all traffic to its children will cease until those end devices time out and attempt to find a new parent. Some models of end device, notably Xiaomi, don't attempt to find a new parent so will remain isolated until re-paired with the network.
-    EndDevice,
-
-    /// Routers are responsible for routing traffic between different nodes. Routers may not sleep. As such, routers are not a suitable choice for battery operated devices. Routers are also responsible for receiving and storing messages intended for their children. In addition to this, routers are the gate keepers to the network. They are responsible for allowing new nodes to join the network.
-    Router,
-
-    /// A coordinator is a special router. In addition to all of the router capabilities, the coordinator is responsible for forming the network. To do that, it must select the appropriate channel, PAN ID, and extended network address. It is also responsible for selecting the security mode of the network.
-    ///
-    /// Every network always has exactly one of these.
-    Coordinator,
-
-    /// Unknown type of device.
-    #[serde(other)]
-    Other,
 }
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct BridgeDeviceDefinition {

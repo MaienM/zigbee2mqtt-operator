@@ -63,7 +63,7 @@ pub struct InstanceSpec {
     #[garde(dive)]
     pub credentials: Option<InstanceSpecCredentials>,
 
-    /// The base topic. Should match the mqtt.base_topic option of the Zigbee2MQTT instance. Defaults to the default used by Zigbee2MQTT ('zigbee2mqtt').
+    /// The base topic. Should match the `mqtt.base_topic` option of the Zigbee2MQTT instance. Defaults to the default used by Zigbee2MQTT ('zigbee2mqtt').
     #[serde(default = "default_instance_base_topic")]
     #[garde(ascii, length(min = 1))]
     pub base_topic: String,
@@ -330,8 +330,7 @@ impl ValueWithSource<ValueFrom> {
             } => {
                 let namespace = skr
                     .namespace
-                    .as_ref()
-                    .cloned()
+                    .clone()
                     .or_else(|| resource.namespace().clone())
                     .ok_or_else(||
                         Error::InvalidResource("resource does not have a namespace, so reference must specify namespace".to_owned()).caused_by(&self.sub((), ".secretKeyRef.namespace"))

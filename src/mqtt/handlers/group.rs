@@ -55,7 +55,6 @@ pub struct BridgeGroup {
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct BridgeGroupMember {
-    pub endpoint: usize,
     pub ieee_address: String,
 }
 

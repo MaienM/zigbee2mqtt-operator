@@ -121,13 +121,13 @@ impl InstanceTracker {
     }
 }
 pub(crate) enum InstanceTrackStatus {
-    /// There is no instance with the provided full_name.
+    /// There is no instance with the provided `full_name`.
     Missing,
-    /// There is an instance with the provided full_name, but there is no manager for it yet.
+    /// There is an instance with the provided `full_name`, but there is no manager for it yet.
     Pending,
-    /// There is an instance with the provided full_name, and there is a manager for it, but the Zigbee2MQTT instance is not healthy.
+    /// There is an instance with the provided `full_name`, and there is a manager for it, but the Zigbee2MQTT instance is not healthy.
     Unhealthy,
-    /// There is an instance with the provided full_name, and there is a manager for it, and the Zigbee2MQTT instance is healthy.
+    /// There is an instance with the provided `full_name`, and there is a manager for it, and the Zigbee2MQTT instance is healthy.
     Ready(Arc<Manager>),
 }
 macro_rules! get_manager {

@@ -89,7 +89,7 @@ pub struct EventCore {
     pub note: Option<String>,
 
     /// Why the action was taken. Human-readable, at most 128 characters.
-    /// It looks like this is usually a single PascalCase word.
+    /// It looks like this is usually a single `PascalCase` word.
     pub reason: String,
 
     /// The type of this event.

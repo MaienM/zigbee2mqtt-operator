@@ -191,7 +191,7 @@ where
         self.stream.next().await
     }
 
-    /// As next(), but returns an error if the stream has ended.
+    /// As [`Self::next`], but returns an error if the stream has ended.
     pub async fn next_noclose(&mut self) -> St::Item {
         match self.next().await {
             Some(result) => result,
