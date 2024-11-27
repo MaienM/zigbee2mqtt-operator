@@ -223,10 +223,26 @@ impl Instance {
         Ok(options)
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn setup_manager(&self, ctx: &Arc<Context>) -> Result<Arc<Manager>, ErrorWithMeta> {
         let mut managers = ctx.state.managers.managers.write().await;
         let full_name = self.get_ref().full_name();
         let entry = managers.entry(full_name.clone()).or_default();
+
+        // Check if manager is connected. If it isn't we discard it just in case it's stuck in some kind of reconnect loop.
+        if let Some(status) = &self.status {
+            if let Some((manager, _)) = entry {
+                if status.zigbee2mqtt != Some(true) {
+                    info_span!(
+                        "replacing manager",
+                        id = self.get_ref().full_name(),
+                        reason = "not connected"
+                    );
+                    manager.close(None).await;
+                    *entry = None;
+                }
+            }
+        }
 
         // Apply options to manager. If this results in an error this means the manager must be recreated so we discard it.
         let options = self.to_options(ctx).await?;
