@@ -70,13 +70,12 @@ where
             self.value = Some(result?);
         };
 
-        match &self.value {
-            Some(value) => Ok(value.clone()),
-            None => {
-                let value = self.subscription.next_noclose_timeout(*TIMEOUT).await?;
-                self.value = Some(value.clone());
-                Ok(value)
-            }
+        if let Some(value) = &self.value {
+            Ok(value.clone())
+        } else {
+            let value = self.subscription.next_noclose_timeout(*TIMEOUT).await?;
+            self.value = Some(value.clone());
+            Ok(value)
         }
     }
 }
