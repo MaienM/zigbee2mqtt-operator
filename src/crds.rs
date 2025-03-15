@@ -20,17 +20,19 @@ use crate::{
 };
 
 /// An object that allows arbitrary nested fields.
-///
-/// This triggers the the rewrite rule introduced in <https://github.com/kube-rs/kube/pull/845>, causing the generated schema to use `x-kubernetes-preserve-unknown-fields` instead of `additionalProperties`. `additionalProperties` doesn't allow properies in nested objects, but `x-kubernetes-preserve-unknown-fields` does.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct NestedMap {
     /// The actual values.
     #[serde(flatten)]
+    #[schemars(schema_with = "add_preserve_unknown")]
     pub values: Map<String, Value>,
+}
 
-    /// This field exists only to trigger the rewrite rule.
-    #[serde(rename = "___", default)]
-    dummy: Option<bool>,
+fn add_preserve_unknown(_gen: &mut schemars::gen::SchemaGenerator) -> Schema {
+    let mut obj = SchemaObject::default();
+    obj.extensions
+        .insert("x-kubernetes-preserve-unknown-fields".into(), true.into());
+    Schema::Object(obj)
 }
 
 ///
