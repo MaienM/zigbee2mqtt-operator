@@ -654,7 +654,7 @@ mod tests {
                 ValueWithSource::new($value.into(), Some("root".to_owned()));
             let result = $expose.process(value.clone());
             result.map_err(|err| match err.error() {
-                Error::InvalidResource(msg) => (msg.clone(), err.source().clone()),
+                Error::InvalidResource(msg) => (msg.clone(), err.source().cloned()),
                 err => panic!("unexpected error: {err:?}"),
             })
         }};

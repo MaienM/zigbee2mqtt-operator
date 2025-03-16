@@ -40,7 +40,7 @@ where
     <T as HasStatus>::Status: Default + Clone + Serialize + PartialEq,
 {
     pub fn new(client: Client, resource: &T) -> Self {
-        return Self {
+        Self {
             api: Arc::new(Api::namespaced(client, &resource.namespace().unwrap())),
             id: resource.get_ref().id(),
             name: resource.name_any(),
@@ -48,7 +48,7 @@ where
             current: resource
                 .status()
                 .map_or_else(T::Status::default, T::Status::clone),
-        };
+        }
     }
 
     pub fn get(&self) -> &T::Status {

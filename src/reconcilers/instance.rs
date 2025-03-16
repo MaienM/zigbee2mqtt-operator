@@ -50,6 +50,7 @@ impl InstanceTracker {
     }
 
     pub async fn get(self: &Arc<Self>, key: &String) -> Result<InstanceTrackStatus, Error> {
+        #[allow(clippy::used_underscore_items)]
         Ok(match self._get(key).await {
             InstanceTrackStatus::Missing => {
                 if self._update().await? {

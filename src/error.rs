@@ -72,6 +72,11 @@ pub enum Error {
         #[source] Option<Arc<dyn std::error::Error + Send + Sync>>,
     ),
 }
+impl From<ErrorWithMeta> for Error {
+    fn from(value: ErrorWithMeta) -> Self {
+        value.error().to_owned()
+    }
+}
 
 /// An [`enum@Error`] with some additional metadata needed to publish a corresponding [`k8s_openapi::api::events::v1::Event`].
 #[allow(clippy::module_name_repetitions)]
@@ -111,8 +116,8 @@ impl ErrorWithMeta {
 
     /// Get source.
     #[must_use]
-    pub fn source(&self) -> &Option<String> {
-        &self.source
+    pub fn source(&self) -> Option<&String> {
+        self.source.as_ref()
     }
 
     /// Mark as already published, which will prevent it from being published again when [`ErrorWithMeta::publish`] is called..

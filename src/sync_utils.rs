@@ -35,7 +35,7 @@ pub struct LockableNotifyGuard<'a> {
     notify: Arc<Notify>,
     _guard: MutexGuard<'a, ()>,
 }
-impl<'a> LockableNotifyGuard<'a> {
+impl LockableNotifyGuard<'_> {
     pub async fn notified(&self) {
         self.notify.notified().await;
     }
