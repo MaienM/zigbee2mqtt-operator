@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::lib::{
@@ -91,4 +91,60 @@ impl BridgeRequestType for Restarter {
     ) -> Option<Result<Self::Response, ErrorWithMeta>> {
         Some(response.into())
     }
+}
+
+//
+// Track bridge extensions topic.
+//
+pub struct BridgeExtensionsTracker(Arc<TopicTracker<Self>>);
+add_wrapper_new!(BridgeExtensionsTracker, TopicTracker);
+impl BridgeExtensionsTracker {
+    pub async fn get(&self) -> Result<BridgeExtensionsPayload, Error> {
+        self.0.get().await
+    }
+}
+impl TopicTrackerType for BridgeExtensionsTracker {
+    const TOPIC: &'static str = "bridge/extensions";
+    type Payload = BridgeExtensionsPayload;
+}
+pub type BridgeExtensionsPayload = Vec<BridgeExtensionsPayloadItem>;
+#[derive(Deserialize, Debug, Clone)]
+pub struct BridgeExtensionsPayloadItem {
+    pub name: String,
+    pub code: String,
+}
+
+///
+/// Install an extension script.
+///
+pub struct ExtensionInstaller(BridgeRequest<ExtensionInstaller>);
+add_wrapper_new!(ExtensionInstaller, BridgeRequest);
+impl ExtensionInstaller {
+    pub async fn run(
+        &mut self,
+        name: &'static str,
+        code: &'static str,
+    ) -> Result<(), ErrorWithMeta> {
+        self.0
+            .request(ExtensionInstallRequest { name, code })
+            .await?;
+        Ok(())
+    }
+}
+impl BridgeRequestType for ExtensionInstaller {
+    const NAME: &'static str = "extension/save";
+    type Request = ExtensionInstallRequest;
+    type Response = Map<String, Value>;
+
+    fn process_response(
+        _request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
+        Some(response.into())
+    }
+}
+#[derive(Serialize, Debug, Clone)]
+pub(crate) struct ExtensionInstallRequest {
+    name: &'static str,
+    code: &'static str,
 }

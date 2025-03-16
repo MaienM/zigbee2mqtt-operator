@@ -12,4 +12,6 @@ pub use group::{
     MemberAdder as GroupMemberAdder, MemberRemover as GroupMemberRemover,
     OptionsManager as GroupOptionsManager, Renamer as GroupRenamer,
 };
-pub use misc::{BridgeInfoTracker, HealthChecker, Restarter};
+pub use misc::{
+    BridgeExtensionsTracker, BridgeInfoTracker, ExtensionInstaller, HealthChecker, Restarter,
+};

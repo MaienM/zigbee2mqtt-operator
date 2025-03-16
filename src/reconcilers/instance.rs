@@ -20,18 +20,10 @@ use tokio::{
 use tracing::{error_span, info_span, warn_span};
 
 use crate::{
-    background_task,
-    crds::{Device, Group, Instance, InstanceHandleUnmanaged, InstanceStatus, Instanced},
-    error::Error,
-    event_manager::{EventManager, EventType},
-    mqtt::{
+    background_task, crds::{Device, Group, Instance, InstanceHandleUnmanaged, InstanceStatus, Instanced}, error::Error, event_manager::{EventManager, EventType}, mqtt::{
         ConnectionStatus, Manager, Options, OptionsCredentials, OptionsTLS, OptionsTLSClient,
         Status, Z2MStatus,
-    },
-    status_manager::StatusManager,
-    with_source::{vws, vws_sub, ValueWithSource},
-    Context, ErrorWithMeta, EventCore, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt,
-    RECONCILE_INTERVAL,
+    }, status_manager::StatusManager, with_source::{vws, vws_sub, ValueWithSource}, Context, ErrorWithMeta, EventCore, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt, EXTENSION_CODE, EXTENSION_NAME, RECONCILE_INTERVAL
 };
 
 /// Helper to keep track of the Manager for each instance.
@@ -183,6 +175,7 @@ impl Reconciler for Instance {
         let eventmanager = EventManager::new(ctx.client.clone(), self.get_ref());
 
         let manager = self.setup_manager(ctx).await?;
+        self.install_extension(&manager).await?;
         self.process_unmanaged::<Device>(ctx, &manager, &eventmanager)
             .await?;
         self.process_unmanaged::<Group>(ctx, &manager, &eventmanager)
@@ -368,6 +361,18 @@ impl Instance {
         drop(managers); // ensure lock is held to here
 
         Ok(manager)
+    }
+
+    async fn install_extension(&self, manager: &Arc<Manager>) -> Result<(), ErrorWithMeta> {
+        let extensions = manager.get_bridge_extensions_tracker().await?.get().await?;
+        let extension = extensions.iter().find(|e| e.name == EXTENSION_NAME);
+        if extension.is_none_or(|e| e.code != EXTENSION_CODE) {
+            manager
+                .install_extension(EXTENSION_NAME, EXTENSION_CODE)
+                .await?;
+        }
+
+        Ok(())
     }
 
     async fn process_unmanaged<T>(

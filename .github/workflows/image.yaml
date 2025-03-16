@@ -57,6 +57,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             RUST_VERSION=${{ env.RUST_VERSION }}
+            NODEJS_VERSION=${{ env.NODEJS_VERSION }}
 
       # The checks are faster than the image builds so it's unlikely this is ever actually a _wait_, but we want to avoid pushing the image if the checks fail.
       - name: Wait for checks workflow to succeed

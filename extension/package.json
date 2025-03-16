@@ -1,0 +1,19 @@
+{
+  "name": "zigbee2mqtt-operator-extension",
+  "version": "1.0.0",
+  "description": "Extension for Zigbee2MQTT used by Zigbee2MQTT Operator.",
+  "main": "main.ts",
+  "author": "Michon van Dooren",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc && sed -i 's/\"use strict\";/&\\nconst exports = {};/' dist/main.js"
+  },
+  "dependencies": {
+    "zigbee2mqtt": "^2.1.3"
+  },
+  "devDependencies": {
+    "@types/json-stable-stringify-without-jsonify": "^1.0.2",
+    "@types/object-assign-deep": "^0.4.3",
+    "typescript": "^5.8.2"
+  }
+}

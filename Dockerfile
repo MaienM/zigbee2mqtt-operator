@@ -1,10 +1,22 @@
 ARG RUST_VERSION
+ARG NODEJS_VERSION
 
 #
-# Builder.
+# Build extension.
 #
 
-FROM --platform=${BUILDPLATFORM} rust:${RUST_VERSION} as builder
+FROM --platform=${BUILDPLATFORM} node:${NODEJS_VERSION} as build-extension
+WORKDIR /source
+
+COPY extension/*.* /source
+RUN npm install
+RUN npm run build
+
+#
+# Build operator.
+#
+
+FROM --platform=${BUILDPLATFORM} rust:${RUST_VERSION} as build-operator
 WORKDIR /source
 
 # Setup rust toolchain for target environment.
@@ -42,6 +54,9 @@ RUN mkdir -p src \
  && cargo fetch --locked --target="$(cat .target)" \
  && rm -r src
 
+# Copy extension.
+COPY --from=build-extension /source/dist /source/extension/dist
+
 # Build binary.
 COPY src/ ./src
 ENV RUSTFLAGS="-Clink-self-contained=yes -Clinker=rust-lld"
@@ -54,8 +69,8 @@ RUN mv "target/$(cat .target)/release/zigbee2mqtt-operator" target/
 
 FROM scratch
 
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=builder /source/target/zigbee2mqtt-operator /
+COPY --from=build-operator /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build-operator /source/target/zigbee2mqtt-operator /
 
 ENTRYPOINT ["/zigbee2mqtt-operator"]
 CMD ["run"]

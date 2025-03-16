@@ -20,9 +20,10 @@ use veil::Redact;
 
 use super::{
     handlers::{
-        BridgeDevicesTracker, BridgeGroupsTracker, BridgeInfoTracker, DeviceCapabilitiesManager,
-        DeviceOptionsManager, DeviceRenamer, GroupCreator, GroupDeletor, GroupMemberAdder,
-        GroupMemberRemover, GroupOptionsManager, GroupRenamer, HealthChecker, Restarter,
+        BridgeDevicesTracker, BridgeExtensionsTracker, BridgeGroupsTracker, BridgeInfoTracker,
+        DeviceCapabilitiesManager, DeviceOptionsManager, DeviceRenamer, ExtensionInstaller,
+        GroupCreator, GroupDeletor, GroupMemberAdder, GroupMemberRemover, GroupOptionsManager,
+        GroupRenamer, HealthChecker, Restarter,
     },
     subscription::TopicSubscription,
 };
@@ -346,6 +347,7 @@ pub struct Manager {
     subscriptions: Mutex<HashMap<String, Arc<Mutex<broadcast::Sender<Publish>>>>>,
     subscription_lock: LockableNotify,
     bridge_info_tracker: OnceCellMaybe<BridgeInfoTracker>,
+    bridge_extensions_tracker: OnceCellMaybe<BridgeExtensionsTracker>,
     bridge_devices_tracker: OnceCellMaybe<BridgeDevicesTracker>,
     bridge_groups_tracker: OnceCellMaybe<BridgeGroupsTracker>,
 }
@@ -449,6 +451,7 @@ impl Manager {
             subscriptions: Mutex::new(HashMap::new()),
             subscription_lock: LockableNotify::new(),
             bridge_info_tracker: OnceCellMaybe::new(),
+            bridge_extensions_tracker: OnceCellMaybe::new(),
             bridge_devices_tracker: OnceCellMaybe::new(),
             bridge_groups_tracker: OnceCellMaybe::new(),
         });
@@ -795,6 +798,25 @@ impl Manager {
     ) -> Result<Arc<BridgeInfoTracker>, Error> {
         self.bridge_info_tracker
             .get_or_init(|| BridgeInfoTracker::new(self.clone()))
+            .await
+    }
+
+    pub async fn get_bridge_extensions_tracker(
+        self: &Arc<Self>,
+    ) -> Result<Arc<BridgeExtensionsTracker>, Error> {
+        self.bridge_extensions_tracker
+            .get_or_init(|| BridgeExtensionsTracker::new(self.clone()))
+            .await
+    }
+
+    pub async fn install_extension(
+        self: &Arc<Self>,
+        name: &'static str,
+        code: &'static str,
+    ) -> Result<(), ErrorWithMeta> {
+        ExtensionInstaller::new(self.clone())
+            .await?
+            .run(name, code)
             .await
     }
 

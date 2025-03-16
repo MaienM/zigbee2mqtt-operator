@@ -1,0 +1,16 @@
+{
+	"include": ["*.ts"],
+	"compilerOptions": {
+		"strict": true,
+		"outDir": "dist",
+		"target": "ES2022",
+		"module": "commonjs",
+		"moduleResolution": "node",
+		"skipLibCheck": true,
+		"experimentalDecorators": true,
+		"esModuleInterop": true,
+		"paths": {
+			"/app/dist/*": ["./node_modules/zigbee2mqtt/dist/*"],
+		},
+	},
+}

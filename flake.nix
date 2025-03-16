@@ -7,8 +7,15 @@
 
     flake-utils.url = "github:numtide/flake-utils";
   };
-  outputs = { nixpkgs, fenix, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      nixpkgs,
+      fenix,
+      flake-utils,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         devToolchain = fenix.packages.${system}.stable;
@@ -32,6 +39,8 @@
 
             pkgs.act
             pkgs.kubectl
+
+            pkgs.nodejs_23
           ];
 
           shellHook = ''
@@ -41,8 +50,14 @@
               if [ "$RUST_VERSION" != "$real_version" ]; then
                 >&2 echo "WARNING: Rust version $RUST_VERSION is specified in .env, but the installed version is $real_version."
               fi
+
+              real_version="$(node --version | cut -c2-)"
+              if [ "$NODEJS_VERSION" != "$real_version" ]; then
+                >&2 echo "WARNING: NodeJS version $NODEJS_VERSION is specified in .env, but the installed version is $real_version."
+              fi
             )
           '';
         };
-      });
+      }
+    );
 }

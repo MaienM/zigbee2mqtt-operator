@@ -51,6 +51,12 @@ pub static RECONCILE_INTERVAL_FAILURE: Lazy<Duration> = Lazy::new(|| {
     )
 });
 
+/// The name used to install the extension in Zigbee2MQTT.
+static EXTENSION_NAME: &str = "operator.js";
+
+/// The source code of the extension.
+static EXTENSION_CODE: &str = include_str!("../extension/dist/main.js");
+
 /// The context that will be available to all reconcile actions.
 #[derive(Clone)]
 pub struct Context {
