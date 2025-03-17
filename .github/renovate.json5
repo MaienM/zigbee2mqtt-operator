@@ -1,0 +1,37 @@
+{
+	$schema: 'https://docs.renovatebot.com/renovate-schema.json',
+	extends: [
+		'config:recommended',
+		':automergeAll',
+		':automergeBranch',
+		':combinePatchMinorReleases',
+		':dependencyDashboard',
+		':enableVulnerabilityAlerts',
+		':pinVersions',
+		':prImmediately',
+		':rebaseStalePrs',
+		':semanticCommitsDisabled',
+		':separateMultipleMajorReleases',
+		'npm:unpublishSafe',
+	],
+	nix: {
+		enabled: true,
+		additionalBranchPrefix: 'nix-',
+		schedule: 'on friday',
+		lockFileMaintenance: {
+			enabled: true,
+			automerge: true,
+			schedule: 'on friday',
+			commitMessageTopic: 'nix',
+		},
+	},
+	npm: {
+		additionalBranchPrefix: 'npm-',
+		lockFileMaintenance: {
+			enabled: true,
+			automerge: true,
+			schedule: 'on friday',
+			commitMessageTopic: 'npm',
+		},
+	},
+}
