@@ -251,7 +251,7 @@ impl Group {
             return Ok(());
         };
 
-        let mut options_manager = manager.get_group_options_manager(group.id.clone()).await?;
+        let mut options_manager = manager.get_group_options_manager(group.id.clone());
         options_manager
             .sync(eventmanager, wanted_options.clone().values())
             .await

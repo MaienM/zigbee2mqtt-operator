@@ -20,10 +20,18 @@ use tokio::{
 use tracing::{error_span, info_span, warn_span};
 
 use crate::{
-    background_task, crds::{Device, Group, Instance, InstanceHandleUnmanaged, InstanceStatus, Instanced}, error::Error, event_manager::{EventManager, EventType}, mqtt::{
+    background_task,
+    crds::{Device, Group, Instance, InstanceHandleUnmanaged, InstanceStatus, Instanced},
+    error::Error,
+    event_manager::{EventManager, EventType},
+    mqtt::{
         ConnectionStatus, Manager, Options, OptionsCredentials, OptionsTLS, OptionsTLSClient,
         Status, Z2MStatus,
-    }, status_manager::StatusManager, with_source::{vws, vws_sub, ValueWithSource}, Context, ErrorWithMeta, EventCore, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt, EXTENSION_CODE, EXTENSION_NAME, RECONCILE_INTERVAL
+    },
+    status_manager::StatusManager,
+    with_source::{vws, vws_sub, ValueWithSource},
+    Context, ErrorWithMeta, EventCore, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt,
+    EXTENSION_CODE, EXTENSION_NAME, RECONCILE_INTERVAL,
 };
 
 /// Helper to keep track of the Manager for each instance.

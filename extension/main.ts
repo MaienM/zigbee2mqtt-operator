@@ -13,6 +13,9 @@ type MQTTMessage = {
 	message: string;
 };
 
+type Zigbee2MQTTRequest<T> = {
+	transaction?: string;
+} & T;
 type Zigbee2MQTTResponseOk<T> = {
 	status: 'ok';
 	data: T;
@@ -26,9 +29,25 @@ type Zigbee2MQTTResponseError = {
 };
 type Zigbee2MQTTResponse<T> = Zigbee2MQTTResponseOk<T> | Zigbee2MQTTResponseError;
 
+interface DeviceOrGroup {
+	ID: number;
+	options: Record<string, unknown>;
+}
+type UnsetOptionsRequest = Zigbee2MQTTRequest<{
+	id: string;
+	paths: string[];
+}>;
+type UnsetOptionsResponse = Zigbee2MQTTResponse<{
+	restart_required: boolean;
+}>;
+
 class OperatorExtension extends Extension {
 	private readonly REQUEST_REGEX: RegExp;
-	private readonly REQUESTS: Record<string, (message: string) => Promise<Zigbee2MQTTResponse<unknown>>> = {};
+	private readonly REQUESTS: Record<string, (message: string) => Promise<Zigbee2MQTTResponse<unknown>>> = {
+		'device/unset-options': this.deviceUnsetOptions,
+		'group/unset-options': this.groupUnsetOptions,
+	};
+	private readonly DEFAULT_EXCLUDE = ['friendlyName', 'friendly_name', 'ID', 'type', 'devices'];
 
 	private readonly settings: Settings;
 	private readonly logger: Logger;
@@ -76,6 +95,85 @@ class OperatorExtension extends Extension {
 				await this.mqtt.publish(`bridge/response/${match[1]}`, stringify(response));
 			}
 		}
+	}
+
+	@bind
+	async deviceUnsetOptions(message: string): Promise<UnsetOptionsResponse> {
+		return await this.unsetEntityOptions('device', message);
+	}
+
+	@bind
+	async groupUnsetOptions(message: string): Promise<UnsetOptionsResponse> {
+		return await this.unsetEntityOptions('group', message);
+	}
+
+	async unsetEntityOptions<T extends 'device' | 'group'>(
+		entityType: T,
+		message: string,
+	): Promise<UnsetOptionsResponse> {
+		const request = utils.parseJSON(message, '') as UnsetOptionsRequest | string;
+		if (typeof request === 'string' || request.id === undefined || request.paths === undefined) {
+			throw new Error('Invalid payload');
+		}
+
+		// Get the current options for the entity & remove the marked fields.
+		const entity = this.getEntity(entityType, request.id);
+		const id = `${entity.ID}`;
+		const oldOptions = this.deepCopyWithExclusions(entity.options, this.DEFAULT_EXCLUDE);
+		const options = this.deepCopyWithExclusions(entity.options, request.paths);
+
+		// We cannot use `settings.changeEntityOptions` or `settings.apply` as these merge the data we provide with the
+		// existing data, which will cause the paths we removed to not actually be unset. This means we need to use
+		// `settings.set`, but unfortunately this doesn't do any validations. To mitigate this we will call
+		// `settings.changeEntityOptions` after the set to have this run its validations.
+		this.settings.set([`${entityType}s`, id], options);
+		this.restartRequired ||= this.settings.changeEntityOptions(id, this.deepCopyWithExclusions(options, this.DEFAULT_EXCLUDE));
+		this.logger.info(`Changed config for ${entityType} ${id}`);
+
+		// Get the set of options that the normal options endpoint would return.
+		const newOptions = this.deepCopyWithExclusions(entity.options, this.DEFAULT_EXCLUDE);
+
+		// Emit result to eventbus and MQTT.
+		this.eventBus.emitEntityOptionsChanged({
+			from: oldOptions,
+			to: newOptions,
+			entity,
+		});
+		return utils.getResponse(request, {
+			from: oldOptions,
+			to: newOptions,
+			id,
+			restart_required: this.restartRequired,
+		});
+	}
+
+	private getEntity(type: 'group' | 'device', ID: string): DeviceOrGroup {
+		const entity = this.zigbee.resolveEntity(ID);
+		if (!entity || entity.constructor.name.toLowerCase() !== type) {
+			throw new Error(`${utils.capitalize(type)} '${ID}' does not exist`);
+		}
+		return entity;
+	}
+
+	private deepCopyWithExclusions(
+		data: object,
+		exclude: string[],
+		parentPath: string = '',
+	): Record<string, unknown> {
+		const result: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(data)) {
+			const path = `${parentPath}${key}`;
+			if (exclude.find((e) => e === path) !== undefined) {
+				continue;
+			}
+
+			if (typeof value === 'object' && value !== null) {
+				result[key] = this.deepCopyWithExclusions(value, exclude, `${path}.`);
+			} else {
+				result[key] = value;
+			}
+		}
+		return result;
 	}
 }
 

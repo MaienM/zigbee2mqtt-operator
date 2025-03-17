@@ -100,9 +100,7 @@ impl Device {
             return Ok(());
         };
 
-        let mut options_manager = manager
-            .get_device_options_manager(vws!(self.spec.ieee_address))
-            .await?;
+        let mut options_manager = manager.get_device_options_manager(vws!(self.spec.ieee_address));
         options_manager
             .sync(eventmanager, wanted_options.clone().values())
             .await

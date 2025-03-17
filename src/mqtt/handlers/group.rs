@@ -328,19 +328,11 @@ impl BridgeRequestType for MemberRemover {
 ///
 pub struct OptionsManager {
     manager: Arc<Manager>,
-    request_manager: BridgeRequest<OptionsManager>,
     id: ValueWithSource<usize>,
 }
 impl OptionsManager {
-    pub async fn new(
-        manager: Arc<Manager>,
-        id: ValueWithSource<usize>,
-    ) -> Result<Self, ErrorWithMeta> {
-        Ok(Self {
-            manager: manager.clone(),
-            request_manager: BridgeRequest::new(manager).await?,
-            id,
-        })
+    pub fn new(manager: Arc<Manager>, id: ValueWithSource<usize>) -> Self {
+        Self { manager, id }
     }
 }
 setup_configuration_manager!(OptionsManager);
@@ -370,9 +362,10 @@ impl ConfigurationManagerInner for OptionsManager {
         &mut self,
         configuration: &ValueWithSource<Configuration>,
     ) -> Result<Configuration, ErrorWithMeta> {
-        let value = self
-            .request_manager
-            .request(OptionsRequest {
+        let mut setter = OptionsSetter(BridgeRequest::new(self.manager.clone()).await?);
+        let value = setter
+            .0
+            .request(OptionsSetRequest {
                 id: self.id.clone(),
                 options: configuration.clone(),
             })
@@ -380,14 +373,31 @@ impl ConfigurationManagerInner for OptionsManager {
         Ok(value.to)
     }
 
+    async fn unset(
+        &mut self,
+        paths: ValueWithSource<Vec<String>>,
+    ) -> Result<Configuration, ErrorWithMeta> {
+        let mut setter = OptionsUnsetter(BridgeRequest::new(self.manager.clone()).await?);
+        let value = setter
+            .0
+            .request(OptionsUnsetRequest {
+                id: self.id.clone(),
+                paths,
+            })
+            .await?;
+        Ok(value.to)
+    }
+
     fn is_property_clearable(key: &str) -> bool {
-        !matches!(key, "friendly_name" | "devices")
+        !matches!(key, "ID" | "friendly_name" | "devices")
     }
 }
-impl BridgeRequestType for OptionsManager {
+
+pub struct OptionsSetter(BridgeRequest<OptionsSetter>);
+impl BridgeRequestType for OptionsSetter {
     const NAME: &'static str = "group/options";
-    type Request = OptionsRequest;
-    type Response = OptionsResponse;
+    type Request = OptionsSetRequest;
+    type Response = OptionsSetResponse;
 
     fn process_response(
         request: &Self::Request,
@@ -412,12 +422,51 @@ impl BridgeRequestType for OptionsManager {
     }
 }
 #[derive(Serialize, Debug, Clone)]
-pub(crate) struct OptionsRequest {
+pub(crate) struct OptionsSetRequest {
     id: ValueWithSource<usize>,
     options: ValueWithSource<Configuration>,
 }
 #[derive(Deserialize)]
-pub(crate) struct OptionsResponse {
+pub(crate) struct OptionsSetResponse {
+    id: usize,
+    to: Configuration,
+}
+
+pub struct OptionsUnsetter(BridgeRequest<OptionsUnsetter>);
+impl BridgeRequestType for OptionsUnsetter {
+    const NAME: &'static str = "group/unset-options";
+    type Request = OptionsUnsetRequest;
+    type Response = OptionsUnsetResponse;
+
+    fn process_response(
+        request: &Self::Request,
+        response: RequestResponse<Self::Response>,
+    ) -> Option<Result<Self::Response, ErrorWithMeta>> {
+        match response {
+            RequestResponse::Ok { ref data } => {
+                if data.id == *request.id {
+                    Some(response.into())
+                } else {
+                    None
+                }
+            }
+            RequestResponse::Error { ref error } => {
+                if error.contains(&format!("'{}'", request.id)) {
+                    Some(response.convert().map_err(|err| err.caused_by(&request.id)))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+#[derive(Serialize, Debug, Clone)]
+pub(crate) struct OptionsUnsetRequest {
+    id: ValueWithSource<usize>,
+    paths: ValueWithSource<Vec<String>>,
+}
+#[derive(Deserialize)]
+pub(crate) struct OptionsUnsetResponse {
     id: usize,
     to: Configuration,
 }

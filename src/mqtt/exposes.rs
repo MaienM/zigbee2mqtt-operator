@@ -1135,17 +1135,6 @@ mod tests {
         }
 
         #[test]
-        fn unknown_null() {
-            // Null value should be permitted for unknown fields so that these can be unset if they are somehow set by an outside process.
-            assert_roundtrip!(
-                EXPOSE,
-                json!({
-                    "unknown": null,
-                }),
-            );
-        }
-
-        #[test]
         fn device_options_common() {
             let expose = DeviceOptionsSchema::from(vec![]);
 

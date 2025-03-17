@@ -843,11 +843,11 @@ impl Manager {
             .await
     }
 
-    pub async fn get_device_options_manager(
+    pub fn get_device_options_manager(
         self: &Arc<Self>,
         ieee_address: ValueWithSource<String>,
-    ) -> Result<DeviceOptionsManager, Error> {
-        DeviceOptionsManager::new(self.clone(), ieee_address).await
+    ) -> DeviceOptionsManager {
+        DeviceOptionsManager::new(self.clone(), ieee_address)
     }
 
     pub async fn get_device_capabilities_manager(
@@ -917,11 +917,11 @@ impl Manager {
             .await
     }
 
-    pub async fn get_group_options_manager(
+    pub fn get_group_options_manager(
         self: &Arc<Self>,
         id: ValueWithSource<usize>,
-    ) -> Result<GroupOptionsManager, ErrorWithMeta> {
-        GroupOptionsManager::new(self.clone(), id).await
+    ) -> GroupOptionsManager {
+        GroupOptionsManager::new(self.clone(), id)
     }
 }
 impl Debug for Manager {

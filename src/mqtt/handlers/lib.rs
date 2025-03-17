@@ -1,4 +1,4 @@
-use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -201,31 +201,40 @@ pub(super) trait ConfigurationManagerInner {
         configuration: &ValueWithSource<Configuration>,
     ) -> Result<Configuration, ErrorWithMeta>;
 
+    /// Remove the specific paths from the configuration and return the resulting configuration.
+    async fn unset(
+        &mut self,
+        paths: ValueWithSource<Vec<String>>,
+    ) -> Result<Configuration, ErrorWithMeta>;
+
     /// Whether to set a property which is currently set but missing from the new configuration to null.
     fn is_property_clearable(key: &str) -> bool;
 }
 struct ConfigurationManagerHelpers;
 impl ConfigurationManagerHelpers {
-    fn insert_null_for_clearable(
+    fn find_clearable_paths<'a>(
+        paths: &mut HashMap<String, &'a Value>,
         is_property_clearable: fn(&str) -> bool,
-        configuration: &mut Configuration,
-        current: &Configuration,
+        new_config: &Configuration,
+        old_config: &'a Configuration,
         parent_key: &str,
     ) {
-        for (key, current_inner) in current {
-            match configuration.get_mut(key).map(Value::as_object_mut) {
+        for (key, old_inner) in old_config {
+            match new_config.get(key).map(Value::as_object) {
                 None => {
-                    if is_property_clearable(&format!("{parent_key}.{key}")[1..]) {
-                        configuration.insert(key.clone(), Value::Null);
+                    let path = format!("{parent_key}.{key}")[1..].to_owned();
+                    if is_property_clearable(&path) {
+                        paths.insert(path, old_inner);
                     }
                 }
                 Some(None) => {}
-                Some(Some(ref mut configuration_inner)) => {
-                    if let Some(current_inner) = current_inner.as_object() {
-                        ConfigurationManagerHelpers::insert_null_for_clearable(
+                Some(Some(ref mut new_inner)) => {
+                    if let Some(old_inner) = old_inner.as_object() {
+                        ConfigurationManagerHelpers::find_clearable_paths(
+                            paths,
                             is_property_clearable,
-                            configuration_inner,
-                            current_inner,
+                            new_inner,
+                            old_inner,
                             &format!("{parent_key}.{key}"),
                         );
                     }
@@ -240,21 +249,45 @@ pub(super) trait ConfigurationManager: ConfigurationManagerInner {
     async fn sync(
         &mut self,
         eventmanager: &EventManager,
-        mut configuration: ValueWithSource<Configuration>,
+        configuration: ValueWithSource<Configuration>,
     ) -> Result<(), ErrorWithMeta> {
         // Get the current configuration.
-        let current = self.get().await?;
+        let mut current = self.get().await?;
 
-        // Insert null for properties in the current configuration that should be cleared.
-        configuration = configuration.transform(|mut configuration| {
-            ConfigurationManagerHelpers::insert_null_for_clearable(
-                Self::is_property_clearable,
-                &mut configuration,
-                &current,
-                "",
-            );
-            configuration.take()
-        });
+        // Find properties that need to be cleared.
+        let mut to_clear = HashMap::new();
+        ConfigurationManagerHelpers::find_clearable_paths(
+            &mut to_clear,
+            Self::is_property_clearable,
+            &configuration,
+            &current,
+            "",
+        );
+
+        // Log the paths to be cleared.
+        for (path, value) in &to_clear {
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(format!(
+                        "resetting {name} {path} to default value (previously {value})",
+                        name = Self::NAME,
+                    )),
+                    reason: "Created".to_string(),
+                    type_: EventType::Normal,
+                    field_path: configuration
+                        .source()
+                        .map(|source| format!("{source}.{path}")),
+                })
+                .await;
+        }
+
+        // Clear the paths.
+        if !to_clear.is_empty() {
+            self.unset(configuration.with_value(to_clear.into_keys().collect()))
+                .await?;
+            current = self.get().await?;
+        }
 
         // Use schema to validate/process configuration.
         let schema = self.schema().await?;
@@ -349,13 +382,13 @@ fn find_differences(wanted: &Configuration, actual: &Configuration) -> Vec<Diffe
             (None | Some(Value::Null), None | Some(Value::Null)) => {
                 continue;
             }
-            (None | Some(Value::Null), Some(actual)) => (
-                "default value".to_string(),
+            (None, Some(actual)) => (
+                "not set".to_string(),
                 serde_json::to_string(actual).unwrap_or_else(|_| actual.to_string()),
             ),
-            (Some(wanted), None | Some(Value::Null)) => (
+            (Some(wanted), None) => (
                 serde_json::to_string(wanted).unwrap_or_else(|_| wanted.to_string()),
-                "default value".to_string(),
+                "not set".to_string(),
             ),
             (Some(wanted), Some(actual)) => {
                 if wanted == actual {
