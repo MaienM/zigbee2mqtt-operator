@@ -50,7 +50,7 @@ impl Reconciler for Group {
             s.synced = Some(false);
         });
 
-        self.sync_name(&manager, &group).await?;
+        self.sync_name(&manager, &eventmanager, &group).await?;
         self.sync_members(&manager, &eventmanager, &group).await?;
         self.sync_options(&manager, &eventmanager, &group).await?;
 
@@ -150,10 +150,23 @@ impl Group {
     async fn sync_name(
         &self,
         manager: &Arc<Manager>,
+        eventmanager: &EventManager,
         group: &BridgeGroupInfo,
     ) -> Result<(), ErrorWithMeta> {
         let friendly_name = vws!(self.spec.friendly_name);
         if group.info.friendly_name != *friendly_name {
+            eventmanager
+                .publish(EventCore {
+                    action: "Reconciling".to_string(),
+                    note: Some(format!(
+                        "updating friendly name to {friendly_name} (previously {old_friendly_name})",
+                        old_friendly_name = group.info.friendly_name,
+                    )),
+                    reason: "Created".to_string(),
+                    type_: EventType::Normal,
+                    ..EventCore::default()
+                })
+                .await;
             manager
                 .rename_group(group.id.clone(), friendly_name)
                 .await?;
