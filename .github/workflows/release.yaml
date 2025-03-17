@@ -1,4 +1,4 @@
-name: Checks
+name: Release
 
 on:
   push:
@@ -134,3 +134,113 @@ jobs:
         with:
           report_paths: target/nextest/ci/junit.xml
           annotate_only: true
+
+  image:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - rustfmt
+      - clippy
+      - nextest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Load .env
+        uses: falti/dotenv-action@v1.0.4
+        with:
+          export-variables: true
+          log-variables: true
+          keys-case: upper
+
+      - name: Login to GHCR
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+
+      - name: Extract metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Build
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            RUST_VERSION=${{ env.RUST_VERSION }}
+            NODEJS_VERSION=${{ env.NODEJS_VERSION }}
+
+      - name: Push
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            RUST_VERSION=${{ env.RUST_VERSION }}
+
+  chart:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Login to GHCR
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+
+      - name: Extract metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: type=semver,pattern={{version}}
+          flavor: latest=false
+
+      - name: Set image tag
+        uses: mikefarah/yq@v4.40.5
+        with:
+          cmd: yq -i '.image.tag = "${{ steps.metadata.outputs.version }}"' chart/values.yaml
+
+      - name: Generate CRDs
+        run: |
+          docker run --rm ${{ steps.metadata.outputs.tags }} crdgen > chart/crds.yaml
+
+      - name: Push Helm chart
+        uses: gacts/run-and-post-run@v1
+        with:
+          run: |
+            echo ${{ github.token }} | helm registry login -u ${{ github.repository_owner }} --password-stdin ghcr.io
+            helm package chart --version "${{ steps.metadata.outputs.version }}-chart" --app-version "${{ steps.metadata.outputs.version }}"
+            helm push "zigbee2mqtt-operator-${{ steps.metadata.outputs.version }}-chart.tgz" "oci://${DOCKER_METADATA_OUTPUT_TAGS%/*}"
+          post: |
+            helm registry logout ghcr.io
