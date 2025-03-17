@@ -6,4 +6,7 @@ mod manager;
 mod subscription;
 
 pub use handlers::BridgeGroup;
-pub use manager::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus};
+pub use manager::{
+    ConnectionStatus, Manager, Options, OptionsCredentials, OptionsTLS, OptionsTLSClient, Status,
+    Z2MStatus,
+};

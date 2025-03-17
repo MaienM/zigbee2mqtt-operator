@@ -3,9 +3,12 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 use futures::Future;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use rumqttc::{
+    tokio_rustls::rustls::{ClientConfig, RootCertStore},
     AsyncClient as MqttClient, ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event,
-    EventLoop, MqttOptions, Outgoing, Packet, Publish, QoS, Request,
+    EventLoop, MqttOptions, Outgoing, Packet, Publish, QoS, Request, TlsConfiguration, Transport,
 };
+use rustls_native_certs::load_native_certs;
+use rustls_pemfile::Item;
 use tokio::{
     select, spawn,
     sync::{broadcast, mpsc, watch, Mutex, OnceCell},
@@ -205,29 +208,97 @@ impl From<&Status> for EventCore {
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Options {
     pub client_id: String,
-    pub host: String,
-    pub port: u16,
-    pub credentials: Option<Credentials>,
-    pub base_topic: String,
+    pub host: ValueWithSource<String>,
+    pub port: ValueWithSource<u16>,
+    pub tls: ValueWithSource<Option<OptionsTLS>>,
+    pub credentials: ValueWithSource<Option<OptionsCredentials>>,
+    pub base_topic: ValueWithSource<String>,
+}
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub struct OptionsTLS {
+    pub ca: ValueWithSource<Option<String>>,
+    pub client: ValueWithSource<Option<OptionsTLSClient>>,
 }
 #[derive(Eq, PartialEq, Redact, Clone)]
-pub struct Credentials {
-    pub username: String,
+pub struct OptionsTLSClient {
+    pub cert: ValueWithSource<String>,
     #[redact(fixed = 3)]
-    pub password: String,
+    pub key: ValueWithSource<String>,
+}
+#[derive(Eq, PartialEq, Redact, Clone)]
+pub struct OptionsCredentials {
+    pub username: ValueWithSource<String>,
+    #[redact(fixed = 3)]
+    pub password: ValueWithSource<String>,
 }
 impl Options {
-    pub(self) fn to_rumqtt(&self) -> MqttOptions {
-        let mut options = MqttOptions::new(self.client_id.clone(), self.host.clone(), self.port);
-        if let Some(cred) = &self.credentials {
-            options.set_credentials(cred.username.clone(), cred.password.clone());
+    pub(self) fn to_rumqtt(&self) -> Result<MqttOptions, ErrorWithMeta> {
+        let mut options =
+            MqttOptions::new(self.client_id.clone(), self.host.clone().take(), *self.port);
+        if let Some(tls) = self.tls.clone().transpose() {
+            let mut store = RootCertStore::empty();
+            if let Some(ca) = tls.ca.clone().transpose() {
+                let mut ca_bytes = Box::new(ca.as_bytes());
+                for cert in rustls_pemfile::read_all(&mut ca_bytes) {
+                    match cert {
+                        Err(err) => {
+                            return Err(Error::InvalidResource(format!(
+                                "unable to parse ca certificates: {err}"
+                            ))
+                            .caused_by(&ca))
+                        }
+                        Ok(Item::X509Certificate(ref cert)) => {
+                            store.add(cert.to_owned()).map_err(|err| {
+                                Error::InvalidResource(format!(
+                                    "unable to parse ca certificate: {err}"
+                                ))
+                                .caused_by(&ca)
+                            })?;
+                        }
+                        Ok(item) => {
+                            return Err(Error::InvalidResource(format!(
+                                "found non-certificate in pem bundle: {item:?}"
+                            ))
+                            .caused_by(&ca))
+                        }
+                    }
+                }
+            } else {
+                let result = load_native_certs();
+                if result.certs.is_empty() {
+                    return Err(Error::InvalidResource(
+                        "unable to load default certificates, specify root ca".to_owned(),
+                    )
+                    .caused_by(&tls.ca));
+                }
+                let (added, ignored) = store.add_parsable_certificates(result.certs);
+                if added == 0 {
+                    return Err(Error::InvalidResource(
+                        "unable to load any of the system certificates, specify root ca".to_owned(),
+                    )
+                    .caused_by(&tls.ca));
+                }
+                if ignored == 0 {
+                    info_span!("Loaded all system certificates", added, ignored);
+                } else {
+                    warn_span!("Loaded some system certificates", added, ignored);
+                }
+            }
+
+            let config = ClientConfig::builder()
+                .with_root_certificates(store)
+                .with_no_client_auth();
+            options.set_transport(Transport::Tls(TlsConfiguration::Rustls(Arc::new(config))));
+        }
+        if let Some(cred) = self.credentials.clone().take() {
+            options.set_credentials(cred.username.take(), cred.password.take());
         }
 
         options.set_clean_session(false);
         options.set_keep_alive(Duration::from_secs(15));
         options.set_max_packet_size(50_000_000, 50_000_000);
 
-        options
+        Ok(options)
     }
 }
 
@@ -282,7 +353,7 @@ impl Manager {
     #[allow(clippy::too_many_lines)]
     pub async fn new(
         options: Options,
-    ) -> Result<(Arc<Self>, mpsc::UnboundedReceiver<Status>), Error> {
+    ) -> Result<(Arc<Self>, mpsc::UnboundedReceiver<Status>), ErrorWithMeta> {
         info_span!("creating Zigbee2MQTT manager", ?options);
 
         let (status_sender, status_receiver) = mpsc::unbounded_channel();
@@ -319,13 +390,13 @@ impl Manager {
                             expected = stringify!($expected),
                         ),
                         None,
-                    ));
+                    ).unknown_cause());
                 }
             }
         }
 
         // We want a persistent session for when we need to reconnect due to connection issues/credential changes, but we don't want state from an earlier MQTTManager.
-        let mut mqttoptions = options.to_rumqtt();
+        let mut mqttoptions = options.to_rumqtt()?;
         let _ = status_sender.send(Status::ConnectionStatus(ConnectionStatus::Pending));
 
         // To do this we first connect with clean_session=true to clear any existing session for this client id, which should result in session_present=false regardless of whether a session existed.
@@ -394,10 +465,15 @@ impl Manager {
                 }));
             };
         }
-        spawn_task!(
-            "main loop",
-            inst.clone().task_main(eventloop, shutdown_sender)
-        );
+        spawn_task!("main loop", {
+            let this = inst.clone();
+            async move {
+                this.clone()
+                    .task_main(eventloop, shutdown_sender)
+                    .await
+                    .map_err(|e| e.error().to_owned())
+            }
+        });
         spawn_task!("Zigbee2MQTT healthcheck", inst.clone().task_healthcheck());
         drop(tasks);
 
@@ -408,7 +484,7 @@ impl Manager {
         self: Arc<Self>,
         eventloop: EventLoop,
         shutdown_sender: watch::Sender<bool>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ErrorWithMeta> {
         // Until the shutdown procedure is started by setting the shutdown reason we keep running the listener, creating new clients when needed.
         let mut eventloop = eventloop;
         loop {
@@ -422,7 +498,7 @@ impl Manager {
             let mut client = self.client.lock().await;
             client_disconnect_or_warn(&client, &self.id).await;
             let (newclient, neweventloop) =
-                MqttClient::new(self.options.lock().await.clone().to_rumqtt(), 10);
+                MqttClient::new(self.options.lock().await.clone().to_rumqtt()?, 10);
 
             *client = newclient;
             eventloop = neweventloop;

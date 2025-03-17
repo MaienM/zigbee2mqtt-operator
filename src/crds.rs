@@ -61,6 +61,10 @@ pub struct InstanceSpec {
     #[garde(range(min = 1, max = 65535))]
     pub port: u16,
 
+    /// The TLS config for the connection with the MQTT broker.
+    #[garde(dive)]
+    pub tls: Option<InstanceSpecTLS>,
+
     /// The credentials to authenticate with.
     #[garde(dive)]
     pub credentials: Option<InstanceSpecCredentials>,
@@ -83,6 +87,30 @@ pub struct InstanceSpec {
 }
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
 #[allow(missing_docs)]
+pub struct InstanceSpecTLS {
+    /// The root certificates to verify the server's certificate with.
+    ///
+    /// If not present the default set of root certificates will be used.
+    #[garde(dive)]
+    pub ca: Option<ValueFrom>,
+
+    /// The client certificate to authenticate with.
+    #[garde(dive)]
+    pub client: Option<InstanceSpecTLSClient>,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
+#[allow(missing_docs)]
+pub struct InstanceSpecTLSClient {
+    /// The client certificate.
+    #[garde(dive)]
+    pub cert: ValueFrom,
+
+    /// The client certificate's key.
+    #[garde(dive)]
+    pub key: ValueFrom,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Validate)]
+#[allow(missing_docs)]
 pub struct InstanceSpecCredentials {
     /// The username to authenticate with.
     #[garde(dive)]
@@ -98,7 +126,7 @@ pub struct InstanceStatus {
     /// Whether there is an active connection with the MQTT broker.
     pub broker: bool,
 
-    /// Whether zigbee2mqtt is reachable and healthy.
+    /// Whether Zigbee2MQTT is reachable and healthy.
     pub zigbee2mqtt: Option<bool>,
 }
 /// How to handle a resource that exists in Zigbee2MQTT but not in K8s.

@@ -54,6 +54,7 @@ RUN mv "target/$(cat .target)/release/zigbee2mqtt-operator" target/
 
 FROM scratch
 
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /source/target/zigbee2mqtt-operator /
 
 ENTRYPOINT ["/zigbee2mqtt-operator"]

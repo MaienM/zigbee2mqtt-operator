@@ -24,9 +24,12 @@ use crate::{
     crds::{Device, Group, Instance, InstanceHandleUnmanaged, InstanceStatus, Instanced},
     error::Error,
     event_manager::{EventManager, EventType},
-    mqtt::{ConnectionStatus, Credentials, Manager, Options, Status, Z2MStatus},
+    mqtt::{
+        ConnectionStatus, Manager, Options, OptionsCredentials, OptionsTLS, OptionsTLSClient,
+        Status, Z2MStatus,
+    },
     status_manager::StatusManager,
-    with_source::{vws, vws_sub},
+    with_source::{vws, vws_sub, ValueWithSource},
     Context, ErrorWithMeta, EventCore, ObjectReferenceLocalExt, Reconciler, ResourceLocalExt,
     RECONCILE_INTERVAL,
 };
@@ -208,17 +211,41 @@ impl Instance {
     async fn to_options(&self, ctx: &Arc<Context>) -> Result<Options, ErrorWithMeta> {
         let mut options = Options {
             client_id: self.get_ref().full_name(),
-            host: self.spec.host.clone(),
-            port: self.spec.port,
-            credentials: None,
-            base_topic: self.spec.base_topic.clone(),
+            host: vws!(self.spec.host),
+            port: vws!(self.spec.port),
+            tls: ValueWithSource::new(None, Some("spec.tls".to_owned())),
+            credentials: ValueWithSource::new(None, Some("spec.credentials".to_owned())),
+            base_topic: vws!(self.spec.base_topic),
         };
 
+        if let Some(tls) = vws!(self.spec.tls).transpose() {
+            let mut tls_opt = OptionsTLS {
+                ca: tls.sub(None, "ca"),
+                client: tls.sub(None, "client"),
+            };
+
+            if let Some(ca) = vws_sub!(tls.ca).transpose() {
+                tls_opt.ca = ca
+                    .get(&ctx.client, self)
+                    .await?
+                    .transform(|v| Some(v.take()));
+            }
+
+            if let Some(client) = vws_sub!(tls.client).transpose() {
+                tls_opt.client = client.with_value(Some(OptionsTLSClient {
+                    cert: vws_sub!(client.cert).get(&ctx.client, self).await?,
+                    key: vws_sub!(client.key).get(&ctx.client, self).await?,
+                }));
+            }
+
+            options.tls = tls.with_value(Some(tls_opt));
+        }
+
         if let Some(cred) = vws!(self.spec.credentials).transpose() {
-            options.credentials = Some(Credentials {
-                username: vws_sub!(cred.username).get(&ctx.client, self).await?.take(),
-                password: vws_sub!(cred.password).get(&ctx.client, self).await?.take(),
-            });
+            options.credentials = cred.with_value(Some(OptionsCredentials {
+                username: vws_sub!(cred.username).get(&ctx.client, self).await?,
+                password: vws_sub!(cred.password).get(&ctx.client, self).await?,
+            }));
         }
 
         Ok(options)
