@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use futures::Future;
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use rand::{distr::Alphanumeric, rng, Rng};
 use rumqttc::{
     tokio_rustls::rustls::{ClientConfig, RootCertStore},
     AsyncClient as MqttClient, ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event,
@@ -364,7 +364,7 @@ impl Manager {
         let id = format!(
             "{id}#{random}",
             id = options.client_id,
-            random = thread_rng()
+            random = rng()
                 .sample_iter(&Alphanumeric)
                 .take(8)
                 .map(char::from)
