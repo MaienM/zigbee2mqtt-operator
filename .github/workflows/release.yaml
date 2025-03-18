@@ -43,7 +43,7 @@ jobs:
           components: rustfmt
 
       - name: Rustfmt Check
-        uses: clechasseur/rs-fmt-check@v2.0.1
+        uses: clechasseur/rs-fmt-check@v2.0.8
 
   clippy:
     name: Linting (clippy)
