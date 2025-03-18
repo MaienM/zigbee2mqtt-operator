@@ -29,7 +29,7 @@ jobs:
           touch extension/dist/main.js
 
       - name: Load .env
-        uses: falti/dotenv-action@v1.0.4
+        uses: falti/dotenv-action@v1.1.4
         with:
           export-variables: true
           log-variables: true
@@ -61,7 +61,7 @@ jobs:
           touch extension/dist/main.js
 
       - name: Load .env
-        uses: falti/dotenv-action@v1.0.4
+        uses: falti/dotenv-action@v1.1.4
         with:
           export-variables: true
           log-variables: true
@@ -97,7 +97,7 @@ jobs:
           touch extension/dist/main.js
 
       - name: Load .env
-        uses: falti/dotenv-action@v1.0.4
+        uses: falti/dotenv-action@v1.1.4
         with:
           export-variables: true
           log-variables: true
@@ -152,7 +152,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Load .env
-        uses: falti/dotenv-action@v1.0.4
+        uses: falti/dotenv-action@v1.1.4
         with:
           export-variables: true
           log-variables: true
