@@ -131,7 +131,7 @@ jobs:
           cmd: yq -i 'with(.testsuites.testsuite.testcase; .[] |= with(select(.failure != null) | .failure; (."+content" | capture("(?s)panicked at (?P<file>[^:]+):(?P<line>\d+):\d+:\n(?P<message>.*)")) as $match | ."+@file" = $match.file | ."+@line" = $match.line | ."+@message" = $match.message))' target/nextest/ci/junit.xml
 
       - name: Upload results to GitHub
-        uses: mikepenz/action-junit-report@v5.5.0
+        uses: mikepenz/action-junit-report@v5.5.1
         if: always()
         with:
           report_paths: target/nextest/ci/junit.xml
