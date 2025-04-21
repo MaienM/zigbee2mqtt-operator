@@ -324,7 +324,7 @@ impl Processor for Numeric {
                 }
             }
             (None, None) => {}
-        };
+        }
         if let Some(step) = self.value_step {
             // This is assuming that steps should be taken from the min value, so a range of 11-31 with steps of 2 would accept 11, 13, 15, etc.
             let start = self.value_min.unwrap_or(0.0);
@@ -396,7 +396,7 @@ impl Processor for List {
                 }
             }
             (None, None) => {}
-        };
+        }
 
         let mut new_items = Vec::new();
         for item in items {
@@ -432,7 +432,7 @@ impl Processor for Bag {
     fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         if !value.is_object() {
             return Err(Error::InvalidResource("Must be an object.".to_owned()).caused_by(&value));
-        };
+        }
         Ok(value.take())
     }
 }

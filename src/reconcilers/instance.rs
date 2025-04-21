@@ -312,31 +312,29 @@ impl Instance {
                 async move {
                     while let Some(event) = status_receiver.recv().await {
                         eventmanager.publish((&event).into()).await;
-                        statusmanager.update(|s| {
-                            match event {
-                                Status::ConnectionStatus(ConnectionStatus::Active) => {
-                                    s.broker = true;
-                                    s.zigbee2mqtt = Some(false);
-                                }
-                                Status::ConnectionStatus(
-                                    ConnectionStatus::Inactive
-                                    | ConnectionStatus::Closed
-                                    | ConnectionStatus::Failed(_)
-                                    | ConnectionStatus::Refused(_),
-                                ) => {
-                                    s.broker = false;
-                                    s.zigbee2mqtt = None;
-                                }
-                                Status::ConnectionStatus(_) => {}
+                        statusmanager.update(|s| match event {
+                            Status::ConnectionStatus(ConnectionStatus::Active) => {
+                                s.broker = true;
+                                s.zigbee2mqtt = Some(false);
+                            }
+                            Status::ConnectionStatus(
+                                ConnectionStatus::Inactive
+                                | ConnectionStatus::Closed
+                                | ConnectionStatus::Failed(_)
+                                | ConnectionStatus::Refused(_),
+                            ) => {
+                                s.broker = false;
+                                s.zigbee2mqtt = None;
+                            }
+                            Status::ConnectionStatus(_) => {}
 
-                                Status::Z2MStatus(Z2MStatus::HealthOk) => {
-                                    s.broker = true;
-                                    s.zigbee2mqtt = Some(true);
-                                }
-                                Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
-                                    s.zigbee2mqtt = Some(false);
-                                }
-                            };
+                            Status::Z2MStatus(Z2MStatus::HealthOk) => {
+                                s.broker = true;
+                                s.zigbee2mqtt = Some(true);
+                            }
+                            Status::Z2MStatus(Z2MStatus::HealthError(_)) => {
+                                s.zigbee2mqtt = Some(false);
+                            }
                         });
                         statusmanager.sync().await;
                         if let Some(Some((_, ref mut status))) =

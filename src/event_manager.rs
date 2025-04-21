@@ -136,19 +136,17 @@ impl EventManager {
         };
 
         let result = entry
-            .and_modify(|event| {
-                match event.series {
-                    Some(ref mut series) => {
-                        series.count += 1;
-                        series.last_observed_time = new_event.event_time.clone().unwrap();
-                    }
-                    None => {
-                        event.series = Some(EventSeries {
-                            count: 2,
-                            last_observed_time: new_event.event_time.clone().unwrap(),
-                        });
-                    }
-                };
+            .and_modify(|event| match event.series {
+                Some(ref mut series) => {
+                    series.count += 1;
+                    series.last_observed_time = new_event.event_time.clone().unwrap();
+                }
+                None => {
+                    event.series = Some(EventSeries {
+                        count: 2,
+                        last_observed_time: new_event.event_time.clone().unwrap(),
+                    });
+                }
             })
             .or_insert(|| new_event)
             .commit(&PostParams::default())
