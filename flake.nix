@@ -23,7 +23,7 @@
       in
       {
         defaultPackage = fenix.packages.x86_64-linux.minimal.toolchain;
-        devShell = pkgs.mkShell {
+        devShells.default = pkgs.mkShell {
           buildInputs = [
             (devToolchain.withComponents [
               "cargo"
@@ -42,21 +42,6 @@
 
             pkgs.nodejs_23
           ];
-
-          shellHook = ''
-            source .env
-            (
-              real_version="$(rustc --version | cut -d' ' -f2)"
-              if [ "$RUST_VERSION" != "$real_version" ]; then
-                >&2 echo "WARNING: Rust version $RUST_VERSION is specified in .env, but the installed version is $real_version."
-              fi
-
-              real_version="$(node --version | cut -c2-)"
-              if [ "$NODEJS_VERSION" != "$real_version" ]; then
-                >&2 echo "WARNING: NodeJS version $NODEJS_VERSION is specified in .env, but the installed version is $real_version."
-              fi
-            )
-          '';
         };
       }
     );

@@ -13,8 +13,28 @@ on:
   merge_group:
 
 jobs:
+  nix-develop:
+    name: Build dev dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+
+      - name: Setup cache for Nix
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+
+      - name: Setup dev environment from flake
+        uses: nicknovitski/nix-develop@v1
+
   rustfmt:
     name: Formatting (rustfmt)
+    needs:
+      - nix-develop
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -23,30 +43,37 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+
+      - name: Setup cache for Nix
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+
+      - name: Setup dev environment from flake
+        uses: nicknovitski/nix-develop@v1
+
+      - name: Checkout & setup matchers for rustfmt
+        uses: actions/checkout@v4
+        with:
+          repository: actions-rust-lang/setup-rust-toolchain
+          ref: v1
+          path: ./setup-rust-toolchain
+      - run: echo "::add-matcher::./setup-rust-toolchain/rust.json"
+
       - name: Add mock extension build
         run: |
           mkdir -p extension/dist
           touch extension/dist/main.js
 
-      - name: Load .env
-        uses: falti/dotenv-action@v1.1.4
-        with:
-          export-variables: true
-          log-variables: true
-          keys-case: upper
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          # This must use nightly because some of the options used in `rustfmt.toml` are unstable and thus nightly-only.
-          toolchain: nightly
-          components: rustfmt
-
       - name: Rustfmt Check
-        uses: clechasseur/rs-fmt-check@v2.0.8
+        run: cargo fmt --check
 
   clippy:
     name: Linting (clippy)
+    needs:
+      - nix-develop
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,34 +82,40 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+
+      - name: Setup cache for Nix
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+
+      - name: Setup dev environment from flake
+        uses: nicknovitski/nix-develop@v1
+
+      - name: Setup cache for Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Checkout & setup matchers for clippy
+        uses: actions/checkout@v4
+        with:
+          repository: actions-rust-lang/setup-rust-toolchain
+          ref: v1
+          path: ./setup-rust-toolchain
+      - run: echo "::add-matcher::./setup-rust-toolchain/rust.json"
+        
       - name: Add mock extension build
         run: |
           mkdir -p extension/dist
           touch extension/dist/main.js
 
-      - name: Load .env
-        uses: falti/dotenv-action@v1.1.4
-        with:
-          export-variables: true
-          log-variables: true
-          keys-case: upper
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: "${{ env.RUST_VERSION }}"
-          components: clippy
-
-      - name: Set up cache
-        uses: Swatinem/rust-cache@v2
-        
       - name: Run clippy
-        uses: clechasseur/rs-clippy-check@v4.0.2
-        with:
-          args: --all-features -- -Dwarnings
+        run: cargo clippy --all-features -- -Dwarnings
 
   nextest:
     name: Tests (nextest)
+    needs:
+      - nix-develop
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -91,30 +124,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+
+      - name: Setup cache for Nix
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+
+      - name: Setup dev environment from flake
+        uses: nicknovitski/nix-develop@v1
+
+      - name: Setup cache for Rust
+        uses: Swatinem/rust-cache@v2
+
       - name: Add mock extension build
         run: |
           mkdir -p extension/dist
           touch extension/dist/main.js
-
-      - name: Load .env
-        uses: falti/dotenv-action@v1.1.4
-        with:
-          export-variables: true
-          log-variables: true
-          keys-case: upper
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: "${{ env.RUST_VERSION }}"
-
-      - name: Install cargo-nextest
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-nextest 
-
-      - name: Set up cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Build
         run:
@@ -128,16 +155,17 @@ jobs:
         uses: mikefarah/yq@master
         if: always()
         with:
-          cmd: yq -i 'with(.testsuites.testsuite.testcase; .[] |= with(select(.failure != null) | .failure; (."+content" | capture("(?s)panicked at (?P<file>[^:]+):(?P<line>\d+):\d+:\n(?P<message>.*)")) as $match | ."+@file" = $match.file | ."+@line" = $match.line | ."+@message" = $match.message))' target/nextest/ci/junit.xml
+          cmd: yq 'with(.testsuites.testsuite.testcase; .[] |= with(select(.failure != null) | .failure; (."+content" | capture("(?s)panicked at (?P<file>[^:]+):(?P<line>\d+):\d+:\n(?P<message>.*)")) as $match | ."+@file" = $match.file | ."+@line" = $match.line | ."+@message" = $match.message))' target/nextest/ci/junit.xml > target/nextest/ci/junit-processed.xml
 
       - name: Upload results to GitHub
         uses: mikepenz/action-junit-report@v5.5.1
         if: always()
         with:
-          report_paths: target/nextest/ci/junit.xml
+          report_paths: target/nextest/ci/junit-processed.xml
           annotate_only: true
 
   image:
+    name: Image
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - rustfmt
@@ -148,15 +176,25 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Load .env
-        uses: falti/dotenv-action@v1.1.4
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+
+      - name: Setup cache for Nix
+        uses: nix-community/cache-nix-action@v6
         with:
-          export-variables: true
-          log-variables: true
-          keys-case: upper
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+
+      - name: Setup dev environment from flake
+        uses: nicknovitski/nix-develop@v1
+
+      - name: Get program versions
+        id: versions
+        run: |
+          echo "rust=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          echo "nodejs=$(node --version | cut -c2-)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -190,10 +228,11 @@ jobs:
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
-            RUST_VERSION=${{ env.RUST_VERSION }}
-            NODEJS_VERSION=${{ env.NODEJS_VERSION }}
+            RUST_VERSION=${{ steps.versions.outputs.rust }}
+            NODEJS_VERSION=${{ steps.versions.outputs.nodejs }}
 
   chart:
+    name: Helm Chart
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - image
