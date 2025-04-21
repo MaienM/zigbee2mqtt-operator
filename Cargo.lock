@@ -2470,7 +2470,6 @@ dependencies = [
  "garde",
  "k8s-openapi",
  "kube",
- "once_cell",
  "pretty_assertions",
  "rand",
  "rumqttc",

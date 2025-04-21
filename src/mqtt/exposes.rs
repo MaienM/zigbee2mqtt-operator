@@ -4,10 +4,11 @@
 //!
 //! Note that these even though these links only mention exposed values the same schemas are used for device options.
 
+use std::sync::LazyLock;
+
 use bitflags::bitflags;
 use derive_builder::Builder;
 use enum_dispatch::enum_dispatch;
-use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde_json::Value;
 use structout::generate;
@@ -323,7 +324,7 @@ impl Processor for Numeric {
                 }
             }
             (None, None) => {}
-        };
+        }
         if let Some(step) = self.value_step {
             // This is assuming that steps should be taken from the min value, so a range of 11-31 with steps of 2 would accept 11, 13, 15, etc.
             let start = self.value_min.unwrap_or(0.0);
@@ -395,7 +396,7 @@ impl Processor for List {
                 }
             }
             (None, None) => {}
-        };
+        }
 
         let mut new_items = Vec::new();
         for item in items {
@@ -431,7 +432,7 @@ impl Processor for Bag {
     fn process(&self, value: ValueWithSource<Value>) -> Result<Value, ErrorWithMeta> {
         if !value.is_object() {
             return Err(Error::InvalidResource("Must be an object.".to_owned()).caused_by(&value));
-        };
+        }
         Ok(value.take())
     }
 }
@@ -471,7 +472,7 @@ impl Processor for Vec<Schema> {
 }
 
 /// The [common device options](https://www.zigbee2mqtt.io/guide/configuration/devices-groups.html#common-device-options).
-static COMMON_DEVICE_OPTIONS: Lazy<Vec<Schema>> = Lazy::new(|| {
+static COMMON_DEVICE_OPTIONS: LazyLock<Vec<Schema>> = LazyLock::new(|| {
     let type_bool = BinaryBuilder::default()
         .value_on(true.into())
         .value_off(false.into())
@@ -546,7 +547,7 @@ static COMMON_DEVICE_OPTIONS: Lazy<Vec<Schema>> = Lazy::new(|| {
 });
 
 /// The [group options](https://www.zigbee2mqtt.io/guide/usage/groups.html#configuration).
-static GROUP_OPTIONS: Lazy<Vec<Schema>> = Lazy::new(|| {
+static GROUP_OPTIONS: LazyLock<Vec<Schema>> = LazyLock::new(|| {
     let type_bool = BinaryBuilder::default()
         .value_on(true.into())
         .value_off(false.into())
@@ -721,7 +722,7 @@ mod tests {
     mod process_binary {
         use super::*;
 
-        static EXPOSE: Lazy<Binary> = Lazy::new(|| {
+        static EXPOSE: LazyLock<Binary> = LazyLock::new(|| {
             BinaryBuilder::default()
                 .value_on("ON".into())
                 .value_off("OFF".into())
@@ -964,7 +965,7 @@ mod tests {
     mod process_capabilities {
         use super::*;
 
-        static EXPOSE: Lazy<DeviceCapabilitiesSchema> = Lazy::new(|| {
+        static EXPOSE: LazyLock<DeviceCapabilitiesSchema> = LazyLock::new(|| {
             DeviceCapabilitiesSchema::from(vec![
                 Schema::Numeric(WithProperty {
                     property: "num".to_owned(),

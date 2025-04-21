@@ -49,7 +49,7 @@ fn topic_match(pattern: &str, topic: &str) -> bool {
                 }
                 return true;
             }
-            "+" => continue,
+            "+" => {}
             _ => {
                 if part != topic_parts[i] {
                     return false;
@@ -583,7 +583,7 @@ impl Manager {
                         }
 
                         _ => {}
-                    };
+                    }
 
                     status
                 }
@@ -684,7 +684,7 @@ impl Manager {
         match self.shutdown_reason.set(error) {
             Ok(()) => {}
             Err(_) => return,
-        };
+        }
 
         // Close the current client connection. This will cause the listener task to close.
         let client = self.client.lock().await;

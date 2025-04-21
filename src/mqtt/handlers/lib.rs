@@ -68,7 +68,7 @@ where
             timeout(Duration::from_millis(1), self.subscription.next_noclose()).await
         {
             self.value = Some(result?);
-        };
+        }
 
         if let Some(value) = &self.value {
             Ok(value.clone())

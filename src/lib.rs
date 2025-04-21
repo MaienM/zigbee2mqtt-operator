@@ -3,14 +3,17 @@
 
 //! An Kubernetes operator to manage resources on Zigbee2MQTT instances.
 
-use std::{env, sync::Arc, time::Duration};
+use std::{
+    env,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use error::ErrorWithMeta;
 pub use event_manager::EventCore;
 use k8s_openapi::api::core::v1::ObjectReference;
 use kube::{core::object::HasStatus, runtime::controller::Action, Client, Resource};
-use once_cell::sync::Lazy;
 use reconcilers::instance::InstanceTracker;
 
 pub mod commands;
@@ -23,27 +26,28 @@ mod status_manager;
 mod sync_utils;
 mod with_source;
 
-static NAME: Lazy<String> = Lazy::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
+static NAME: LazyLock<String> =
+    LazyLock::new(|| env::var("HOSTNAME").unwrap_or("unknown".to_string()));
 
 /// The name of the finalizer for this operator.
 static FINALIZER: &str = "zigbee2mqtt.maienm.com";
 
 /// The timeout for responses/messages from Zigbee2MQTT.
-static TIMEOUT: Lazy<Duration> = Lazy::new(|| {
+static TIMEOUT: LazyLock<Duration> = LazyLock::new(|| {
     Duration::from_secs(env::var("Z2MOP_ACTION_TIMEOUT").map_or(5, |v| v.parse().unwrap()))
 });
 
 /// The maximum interval between reconciles of resources.
 ///
 /// Changes to the K8S resource will immediately trigger a reconcile regardless of this interval, so this only dictates how quickly changes made on the Zigbee2MQTT side will be reconciled.
-pub static RECONCILE_INTERVAL: Lazy<Duration> = Lazy::new(|| {
+pub static RECONCILE_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
     Duration::from_secs(env::var("Z2MOP_RECONCILE_INTERVAL").map_or(60, |v| v.parse().unwrap()))
 });
 
 /// The maximum time to wait after a failed reconcile attempt before retrying.
 ///
 /// Changes to the K8s resource will immediately trigger a reconcile, so this is only important for cases where the failure is temporary and the reconcile can succeed on a retry, not for cases where the resource is invalid in some way.
-pub static RECONCILE_INTERVAL_FAILURE: Lazy<Duration> = Lazy::new(|| {
+pub static RECONCILE_INTERVAL_FAILURE: LazyLock<Duration> = LazyLock::new(|| {
     Duration::from_secs(
         env::var("Z2MOP_RECONCILE_INTERVAL_FAILURE")
             .or(env::var("Z2MOP_RECONCILE_INTERVAL"))
