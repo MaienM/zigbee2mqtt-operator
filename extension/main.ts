@@ -1,9 +1,8 @@
-import bind from 'bind-decorator';
 import stringify from 'json-stable-stringify-without-jsonify';
 import type logger from 'zigbee2mqtt/dist/util/logger';
 import type * as settings from 'zigbee2mqtt/dist/util/settings';
-import Extension from '/app/dist/extension/extension';
-import utils from '/app/dist/util/utils';
+import type Extension from '/app/dist/extension/extension.js';
+import utils from '/app/dist/util/utils.js';
 
 type Settings = typeof settings;
 type Logger = typeof logger;
@@ -41,7 +40,16 @@ type UnsetOptionsResponse = Zigbee2MQTTResponse<{
 	restart_required: boolean;
 }>;
 
-class OperatorExtension extends Extension {
+type GetResponse = <T>(request: unknown, data: T, error?: string) => Zigbee2MQTTResponse<T>;
+const getResponse = utils.getResponse as GetResponse;
+
+class OperatorExtension {
+	private readonly zigbee: Extension['zigbee'];
+	private readonly mqtt: Extension['mqtt'];
+	private readonly eventBus: Extension['eventBus'];
+	private readonly settings: Settings;
+	private readonly logger: Logger;
+
 	private readonly REQUEST_REGEX: RegExp;
 	private readonly REQUESTS: Record<string, (message: string) => Promise<Zigbee2MQTTResponse<unknown>>> = {
 		'device/unset-options': this.deviceUnsetOptions,
@@ -49,34 +57,37 @@ class OperatorExtension extends Extension {
 	};
 	private readonly DEFAULT_EXCLUDE = ['friendlyName', 'friendly_name', 'ID', 'type', 'devices'];
 
-	private readonly settings: Settings;
-	private readonly logger: Logger;
-
 	private restartRequired = false;
 
 	constructor(
 		zigbee: Extension['zigbee'],
 		mqtt: Extension['mqtt'],
-		state: Extension['state'],
-		publishEntityState: Extension['publishEntityState'],
+		_state: Extension['state'],
+		_publishEntityState: Extension['publishEntityState'],
 		eventBus: Extension['eventBus'],
-		enableDisableExtension: Extension['enableDisableExtension'],
-		restartCallback: Extension['restartCallback'],
-		addExtension: Extension['addExtension'],
+		_enableDisableExtension: Extension['enableDisableExtension'],
+		_restartCallback: Extension['restartCallback'],
+		_addExtension: Extension['addExtension'],
 		settings: Settings,
 		logger: Logger,
 	) {
-		super(zigbee, mqtt, state, publishEntityState, eventBus, enableDisableExtension, restartCallback, addExtension);
-		this.REQUEST_REGEX = new RegExp(`${settings.get().mqtt.base_topic}/bridge/request/(.*)`);
+		this.zigbee = zigbee;
+		this.mqtt = mqtt;
+		this.eventBus = eventBus;
 		this.settings = settings;
 		this.logger = logger;
+
+		this.REQUEST_REGEX = new RegExp(`${settings.get().mqtt.base_topic}/bridge/request/(.*)`);
+
+		this.onMQTTMessage = this.onMQTTMessage.bind(this);
+		this.deviceUnsetOptions = this.deviceUnsetOptions.bind(this);
+		this.groupUnsetOptions = this.groupUnsetOptions.bind(this);
 	}
 
-	override async start(): Promise<void> {
+	async start(): Promise<void> {
 		this.eventBus.onMQTTMessage(this, this.onMQTTMessage);
 	}
 
-	@bind
 	async onMQTTMessage(data: MQTTMessage): Promise<void> {
 		const match = data.topic.match(this.REQUEST_REGEX);
 		if (!match) {
@@ -97,12 +108,10 @@ class OperatorExtension extends Extension {
 		}
 	}
 
-	@bind
 	async deviceUnsetOptions(message: string): Promise<UnsetOptionsResponse> {
 		return await this.unsetEntityOptions('device', message);
 	}
 
-	@bind
 	async groupUnsetOptions(message: string): Promise<UnsetOptionsResponse> {
 		return await this.unsetEntityOptions('group', message);
 	}
@@ -139,7 +148,7 @@ class OperatorExtension extends Extension {
 			to: newOptions,
 			entity,
 		});
-		return utils.getResponse(request, {
+		return getResponse(request, {
 			from: oldOptions,
 			to: newOptions,
 			id,
@@ -177,4 +186,4 @@ class OperatorExtension extends Extension {
 	}
 }
 
-module.exports = OperatorExtension;
+export default OperatorExtension;

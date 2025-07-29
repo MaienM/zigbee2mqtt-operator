@@ -3,11 +3,10 @@
 	"compilerOptions": {
 		"strict": true,
 		"outDir": "dist",
-		"target": "ES2022",
-		"module": "commonjs",
+		"target": "ES2024",
+		"module": "ES2022",
 		"moduleResolution": "node",
 		"skipLibCheck": true,
-		"experimentalDecorators": true,
 		"esModuleInterop": true,
 		"paths": {
 			"/app/dist/*": ["./node_modules/zigbee2mqtt/dist/*"],
