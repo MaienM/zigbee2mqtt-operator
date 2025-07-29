@@ -40,7 +40,7 @@
             pkgs.act
             pkgs.kubectl
 
-            pkgs.nodejs_23
+            pkgs.nodejs
           ];
         };
       }
