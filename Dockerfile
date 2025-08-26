@@ -5,7 +5,7 @@ ARG NODEJS_VERSION
 # Build extension.
 #
 
-FROM --platform=${BUILDPLATFORM} node:${NODEJS_VERSION} as build-extension
+FROM --platform=${BUILDPLATFORM} node:${NODEJS_VERSION} AS build-extension
 WORKDIR /source
 
 COPY extension/*.* /source
@@ -16,7 +16,7 @@ RUN npm run build
 # Build operator.
 #
 
-FROM --platform=${BUILDPLATFORM} rust:${RUST_VERSION} as build-operator
+FROM --platform=${BUILDPLATFORM} rust:${RUST_VERSION} AS build-operator
 WORKDIR /source
 
 # Setup rust toolchain for target environment.
@@ -34,7 +34,7 @@ RUN case "${TARGETARCH}" in \
  && rustup target add ${TARGET}
 
 # Setup LLVM environment. (At least) ring needs this to build.
-ARG LLVM_VERSION=16
+ARG LLVM_VERSION=20
 RUN . /etc/os-release \
  && echo "Types: deb" >> /etc/apt/sources.list.d/llvm.sources \
  && echo "URIs: http://apt.llvm.org/${VERSION_CODENAME}/" >> /etc/apt/sources.list.d/llvm.sources \
