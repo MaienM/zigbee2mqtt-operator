@@ -2,7 +2,12 @@ import stringify from 'json-stable-stringify-without-jsonify';
 import type logger from 'zigbee2mqtt/dist/util/logger';
 import type * as settings from 'zigbee2mqtt/dist/util/settings';
 import type Extension from '/app/dist/extension/extension.js';
-import utils from '/app/dist/util/utils.js';
+import _utils from '/app/dist/util/utils.js';
+
+const utils = (_utils as unknown as { default: typeof _utils }).default;
+
+type GetResponse = <T>(request: unknown, data: T, error?: string) => Zigbee2MQTTResponse<T>;
+const getResponse = utils.getResponse as GetResponse;
 
 type Settings = typeof settings;
 type Logger = typeof logger;
@@ -40,9 +45,6 @@ type UnsetOptionsResponse = Zigbee2MQTTResponse<{
 	restart_required: boolean;
 }>;
 
-type GetResponse = <T>(request: unknown, data: T, error?: string) => Zigbee2MQTTResponse<T>;
-const getResponse = utils.getResponse as GetResponse;
-
 class OperatorExtension {
 	private readonly zigbee: Extension['zigbee'];
 	private readonly mqtt: Extension['mqtt'];
@@ -52,8 +54,8 @@ class OperatorExtension {
 
 	private readonly REQUEST_REGEX: RegExp;
 	private readonly REQUESTS: Record<string, (message: string) => Promise<Zigbee2MQTTResponse<unknown>>> = {
-		'device/unset-options': this.deviceUnsetOptions,
-		'group/unset-options': this.groupUnsetOptions,
+		'device/unset-options': this.deviceUnsetOptions.bind(this),
+		'group/unset-options': this.groupUnsetOptions.bind(this),
 	};
 	private readonly DEFAULT_EXCLUDE = ['friendlyName', 'friendly_name', 'ID', 'type', 'devices'];
 
@@ -102,7 +104,7 @@ class OperatorExtension {
 			} catch (error) {
 				this.logger.error(`Request '${data.topic}' failed with error: '${(error as Error).message}'`);
 				this.logger.debug((error as Error).stack!);
-				const response = utils.getResponse(data.message, {}, (error as Error).message);
+				const response = getResponse(data.message, {}, (error as Error).message);
 				await this.mqtt.publish(`bridge/response/${match[1]}`, stringify(response));
 			}
 		}
