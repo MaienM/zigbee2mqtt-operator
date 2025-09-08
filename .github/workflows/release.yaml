@@ -260,7 +260,7 @@ jobs:
           flavor: latest=false
 
       - name: Set image tag
-        uses: mikefarah/yq@v4.47.1
+        uses: mikefarah/yq@v4.47.2
         with:
           cmd: yq -i '.image.tag = "${{ steps.metadata.outputs.version }}"' chart/values.yaml
 
