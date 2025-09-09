@@ -5,13 +5,9 @@ use std::{str::from_utf8, sync::Arc};
 use garde::Validate;
 use k8s_openapi::{api::core::v1::Secret, NamespaceResourceScope};
 use kube::{Api, Client, CustomResource, Resource, ResourceExt};
-use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject, SingleOrVec},
-    JsonSchema,
-};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::{
     error::{Error, ErrorWithMeta},
@@ -28,11 +24,10 @@ pub struct NestedMap {
     pub values: Map<String, Value>,
 }
 
-fn add_preserve_unknown(_gen: &mut schemars::gen::SchemaGenerator) -> Schema {
-    let mut obj = SchemaObject::default();
-    obj.extensions
-        .insert("x-kubernetes-preserve-unknown-fields".into(), true.into());
-    Schema::Object(obj)
+fn add_preserve_unknown(_gen: &mut schemars::SchemaGenerator) -> Schema {
+    json!({ "x-kubernetes-preserve-unknown-fields": true })
+        .try_into()
+        .unwrap()
 }
 
 ///
@@ -143,15 +138,17 @@ pub enum InstanceHandleUnmanaged {
     /// Delete unmanaged resource.
     Delete,
 }
-fn instance_handle_unmanaged_nodelete(_: &mut SchemaGenerator) -> Schema {
-    Schema::Object(SchemaObject {
-        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-        enum_values: Some(vec![
-            serde_json::to_value(InstanceHandleUnmanaged::Ignore).unwrap(),
-            serde_json::to_value(InstanceHandleUnmanaged::Log).unwrap(),
-        ]),
-        ..SchemaObject::default()
-    })
+fn instance_handle_unmanaged_nodelete(gen: &mut SchemaGenerator) -> Schema {
+    let mut schema = InstanceHandleUnmanaged::json_schema(gen);
+    let items = schema.get_mut("oneOf").unwrap().as_array_mut().unwrap();
+    let delete_idx = items
+        .iter()
+        .enumerate()
+        .find(|(_, v)| *v.get("const").unwrap() == "delete")
+        .unwrap()
+        .0;
+    items.remove(delete_idx);
+    schema
 }
 fn default_instance_port() -> u16 {
     1883

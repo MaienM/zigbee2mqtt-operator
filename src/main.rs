@@ -1,4 +1,5 @@
 use argh::FromArgs;
+use rumqttc::tokio_rustls::rustls::crypto::ring;
 use zigbee2mqtt_operator::commands;
 
 /// Zigbee2MQTT operator management.
@@ -18,6 +19,8 @@ enum Command {
 #[tokio::main]
 async fn main() {
     env_logger::init();
+
+    ring::default_provider().install_default().unwrap();
 
     let args: TopLevel = argh::from_env();
     match args.command {
