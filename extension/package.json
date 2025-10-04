@@ -14,6 +14,6 @@
   "devDependencies": {
     "@types/json-stable-stringify-without-jsonify": "1.0.2",
     "@types/object-assign-deep": "0.4.3",
-    "typescript": "5.9.2"
+    "typescript": "5.9.3"
   }
 }
