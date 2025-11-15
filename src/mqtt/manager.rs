@@ -714,12 +714,12 @@ impl Manager {
         } else {
             let (sender, receiver) = broadcast::channel(queue_size);
             let sender = Arc::new(Mutex::new(sender));
-            subscriptions_l.insert(topic.to_string(), sender.clone());
+            subscriptions_l.insert(topic.clone(), sender.clone());
             drop(subscriptions_l);
 
             spawn({
                 let this = self.clone();
-                let topic = topic.to_string();
+                let topic = topic.clone();
                 async move {
                     let mut raw_receiver = this.event_sender.lock().await.subscribe();
                     while let Ok(event) = raw_receiver.recv().await {
@@ -775,7 +775,7 @@ impl Manager {
             })?;
         notify.notified().await;
 
-        Ok(TopicSubscription::new(subscription, topic.to_string()))
+        Ok(TopicSubscription::new(subscription, topic.clone()))
     }
 
     /// Publish a message.
