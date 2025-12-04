@@ -9,7 +9,7 @@
     "build": "tsc && sed -i 's/\"use strict\";/&\\nconst exports = {};/' dist/main.js"
   },
   "dependencies": {
-    "zigbee2mqtt": "2.6.3"
+    "zigbee2mqtt": "2.7.0"
   },
   "devDependencies": {
     "@types/json-stable-stringify-without-jsonify": "1.0.2",
