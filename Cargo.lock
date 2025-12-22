@@ -2180,9 +2180,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "veil"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f00796f9c5969da55497f5c8802c2e69eaf21c0166fe28b6006c7c4699f4d0e"
+checksum = "c7352f0bbf3ab98911b0c0277065094c1b1ec79bbc85fa3b7d16bf1859c3d96f"
 dependencies = [
  "once_cell",
  "veil-macros",
@@ -2190,9 +2190,9 @@ dependencies = [
 
 [[package]]
 name = "veil-macros"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b2d5567b6fbd34e8f0488d56b648e67c0d999535f4af2060d14f9074b43e833"
+checksum = "47a3f4f06d904eb789b935253752ba6bcc1dfa61349f8d5341c66abe070b44e5"
 dependencies = [
  "proc-macro2",
  "quote",
