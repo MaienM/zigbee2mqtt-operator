@@ -11,7 +11,7 @@ use k8s_openapi::{
         events::v1::{Event, EventSeries},
     },
     apimachinery::pkg::apis::meta::v1::MicroTime,
-    chrono::Utc,
+    jiff::Timestamp,
 };
 use kube::{api::PostParams, core::ObjectMeta, Api, Client};
 use serde::Serialize;
@@ -66,7 +66,7 @@ impl EventExt for Event {
             deprecated_first_timestamp: None,
             deprecated_last_timestamp: None,
             deprecated_source: None,
-            event_time: Some(MicroTime(Utc::now())),
+            event_time: Some(MicroTime(Timestamp::now())),
             note: core.note,
             reason: Some(core.reason.clone()),
             regarding: Some(regarding),
