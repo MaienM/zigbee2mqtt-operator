@@ -38,4 +38,11 @@
 			commitMessageTopic: 'npm',
 		},
 	},
+	packageRules: [
+		{
+			matchDatasources: ['cargo'],
+			matchPackageNames: ['k8s-openapi', 'kube'],
+			groupName: 'k8s',
+		},
+	],
 }
