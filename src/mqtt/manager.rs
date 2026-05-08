@@ -553,16 +553,14 @@ impl Manager {
                     let status = (&event).try_into().ok();
 
                     match event {
-                        Event::Incoming(Packet::ConnAck(ref ack)) => {
-                            if !ack.session_present {
-                                let () = self
-                                    .start_shutdown(Some(Box::new(Error::Mqtt(
-                                        "reconnect failed to continue existing session".to_string(),
-                                        None,
-                                    ))))
-                                    .await;
-                                break;
-                            }
+                        Event::Incoming(Packet::ConnAck(ref ack)) if !ack.session_present => {
+                            let () = self
+                                .start_shutdown(Some(Box::new(Error::Mqtt(
+                                    "reconnect failed to continue existing session".to_string(),
+                                    None,
+                                ))))
+                                .await;
+                            break;
                         }
                         Event::Outgoing(Outgoing::Disconnect) => {
                             // Something has triggered a disconnect from self side. self means we're either reconnecting or shutting down, either way self listener needs to shut down.
@@ -724,20 +722,18 @@ impl Manager {
                     let mut raw_receiver = this.event_sender.lock().await.subscribe();
                     while let Ok(event) = raw_receiver.recv().await {
                         match event {
-                            Event::Incoming(Packet::Publish(msg)) => {
-                                if topic_match(&topic, &msg.topic) {
+                            Event::Incoming(Packet::Publish(msg))
+                                if topic_match(&topic, &msg.topic) => {
                                     match sender.lock().await.send(msg) {
                                         Ok(_) => {}
                                         Err(_) => break, // No more listeners, cleanup transform + subscription.
                                     }
                                 }
-                            }
-                            Event::Incoming(Packet::PingReq) => {
+                            Event::Incoming(Packet::PingReq)
                                 // Check if this topic + transform are still needed. This is mostly useful for topics that receive little traffic as these might not attempt a send for a while.
-                                if sender.lock().await.receiver_count() == 0 {
+                                if sender.lock().await.receiver_count() == 0 => {
                                     break;
                                 }
-                            }
                             _ => {}
                         }
                     }
