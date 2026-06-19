@@ -39,10 +39,12 @@
 		},
 	},
 	packageRules: [
+		// Update K8s packages at the same time.
 		{
-			matchDatasources: ['cargo'],
+			matchDatasources: ['crate'],
 			matchPackageNames: ['k8s-openapi', 'kube'],
 			groupName: 'k8s',
+			separateMajorMinor: false,
 		},
 	],
 }
