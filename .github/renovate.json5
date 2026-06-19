@@ -39,10 +39,18 @@
 		},
 	},
 	packageRules: [
+		// Update K8s packages at the same time.
 		{
-			matchDatasources: ['cargo'],
+			matchDatasources: ['crate'],
 			matchPackageNames: ['k8s-openapi', 'kube'],
 			groupName: 'k8s',
+			separateMultipleMajor: false,
+		},
+		// Treat minor changes for projects that are still in the 0.x range as major.
+		{
+			matchCurrentValue: '/^v?0\\./',
+			matchUpdateTypes: ['minor'],
+			automerge: false,
 		},
 	],
 }
