@@ -205,7 +205,7 @@ jobs:
 
       - name: Extract metadata
         id: metadata
-        uses: docker/metadata-action@v6.1.0
+        uses: docker/metadata-action@v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -253,7 +253,7 @@ jobs:
 
       - name: Extract metadata
         id: metadata
-        uses: docker/metadata-action@v6.1.0
+        uses: docker/metadata-action@v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
           tags: type=semver,pattern={{version}}
