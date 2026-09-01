@@ -269,7 +269,7 @@ jobs:
           docker run --rm ${{ steps.metadata.outputs.tags }} crdgen > chart/crds.yaml
 
       - name: Push Helm chart
-        uses: gacts/run-and-post-run@v1.4.4
+        uses: gacts/run-and-post-run@v1.4.5
         with:
           run: |
             echo ${{ github.token }} | helm registry login -u ${{ github.repository_owner }} --password-stdin ghcr.io
