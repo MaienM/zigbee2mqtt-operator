@@ -21,7 +21,7 @@ k8s-openapi = { version = "=0.28.0", features = ["latest"] }
 kube = { version = "=4.2.0", features = ["runtime", "client", "derive"] }
 rand = "=0.10.3"
 rumqttc = "=0.25.1"
-rustls-native-certs = "=0.8.4"
+rustls-native-certs = "=0.8.5"
 rustls-pemfile = "=2.2.0"
 schemars = { version = "=1.2.3", features = ["chrono04"] }
 serde = { version = "=1.0.229", features = ["derive"] }
