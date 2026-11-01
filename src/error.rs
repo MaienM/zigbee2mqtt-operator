@@ -143,7 +143,6 @@ impl Display for ErrorWithMeta {
 #[async_trait]
 pub trait ErrorWithMetaFinalizer<V> {
     /// Unwrap the underlying error (if any), publishing it as an event if needed.
-    #[must_use]
     async fn publish_unwrap_error(
         self,
         ctx: &Arc<Context>,
