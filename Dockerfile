@@ -51,7 +51,7 @@ ENV AR=llvm-ar-${LLVM_VERSION}
 COPY Cargo.* .
 RUN mkdir -p src \
  && touch src/lib.rs \
- && cargo fetch --locked --target="$(cat .target)" \
+ && cargo fetch --locked \
  && rm -r src
 
 # Copy extension.
