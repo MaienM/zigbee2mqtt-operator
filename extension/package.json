@@ -12,7 +12,6 @@
     "zigbee2mqtt": "2.14.3"
   },
   "devDependencies": {
-    "@types/json-stable-stringify-without-jsonify": "1.0.2",
     "@types/object-assign-deep": "0.4.3",
     "typescript": "7.0.2"
   }

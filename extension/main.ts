@@ -1,8 +1,8 @@
-import stringify from 'json-stable-stringify-without-jsonify';
-import type logger from 'zigbee2mqtt/dist/util/logger';
-import type * as settings from 'zigbee2mqtt/dist/util/settings';
+import type logger from 'zigbee2mqtt/dist/util/logger.js';
+import type * as settings from 'zigbee2mqtt/dist/util/settings.js';
 import type Extension from '/app/dist/extension/extension.js';
 import _utils from '/app/dist/util/utils.js';
+import { stringify } from '/app/dist/util/stringify.js';
 
 const utils = (_utils as unknown as { default: typeof _utils }).default;
 

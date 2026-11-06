@@ -5,7 +5,6 @@
 		"outDir": "dist",
 		"target": "ES2024",
 		"module": "ES2022",
-		"moduleResolution": "node",
 		"skipLibCheck": true,
 		"esModuleInterop": true,
 		"paths": {
