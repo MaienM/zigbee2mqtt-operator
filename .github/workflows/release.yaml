@@ -166,7 +166,6 @@ jobs:
 
   image:
     name: Image
-    if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - rustfmt
       - clippy
