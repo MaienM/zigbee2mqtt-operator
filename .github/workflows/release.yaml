@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v35
+        uses: nixbuild/nix-quick-install-action@v36
 
       - name: Setup cache for Nix
         uses: nix-community/cache-nix-action@v7.0.2
@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v35
+        uses: nixbuild/nix-quick-install-action@v36
 
       - name: Setup cache for Nix
         uses: nix-community/cache-nix-action@v7.0.2
@@ -83,7 +83,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v35
+        uses: nixbuild/nix-quick-install-action@v36
 
       - name: Setup cache for Nix
         uses: nix-community/cache-nix-action@v7.0.2
@@ -125,7 +125,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v35
+        uses: nixbuild/nix-quick-install-action@v36
 
       - name: Setup cache for Nix
         uses: nix-community/cache-nix-action@v7.0.2
@@ -179,7 +179,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v35
+        uses: nixbuild/nix-quick-install-action@v36
 
       - name: Setup cache for Nix
         uses: nix-community/cache-nix-action@v7.0.2
